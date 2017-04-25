@@ -102,6 +102,9 @@ if(UNIX AND NOT ANDROID)
     else()
       list(APPEND CMAKE_LIBRARY_PATH /usr/lib)
     endif()
+    if(EXISTS /home/lex/anaconda3/lib)
+      list(APPEND CMAKE_LIBRARY_PATH /home/lex/anaconda3/lib)
+    endif()
   elseif(X86 OR CMAKE_SIZEOF_VOID_P EQUAL 4)
     if(EXISTS /lib32)
       list(APPEND CMAKE_LIBRARY_PATH /lib32)
@@ -112,6 +115,9 @@ if(UNIX AND NOT ANDROID)
       list(APPEND CMAKE_LIBRARY_PATH /usr/lib32)
     else()
       list(APPEND CMAKE_LIBRARY_PATH /usr/lib)
+    endif()
+    if(EXISTS /home/lex/anaconda3/lib)
+      list(APPEND CMAKE_LIBRARY_PATH /home/lex/anaconda3/lib)
     endif()
   endif()
 endif()
@@ -1101,5 +1107,14 @@ endif()
 # ----------------------------------------------------------------------------
 # CPack stuff
 # ----------------------------------------------------------------------------
+
+message(STATUS "\n\nCompile me with the ff for example: \n
+                cd ../; rm build -rf; mkdir build; cd build; cmake  -D BUILD_SHARED_LIBS=ON -D CMAKE_BUILD_TYPE=RELEASE -D CMAKE_INSTALL_PREFIX=/usr/local -D WITH_TBB=ON -D BUILD_NEW_PYTHON_SUPPORT=ON -DWITH_V4L=ON -D WITH_QT=ON -D INSTALL_PYTHON_EXAMPLES=ON -D INSTALL_C_EXAMPLES=ON -D WITH_OPENGL=ON -D WITH_GTK=ON -D WITH_CUDA=ON -D ENABLE_FAST_MATH=1 -D CUDA_FAST_MATH=1 -D WITH_CUBLAS=1 -D WITH_OPENNI=ON -D WITH_OPENMP=ON -D WITH_OPENCL=ON ../")
+
+message(STATUS "\n\n It may be useful to execute this on the command line before running make.\n\n
+grep -rl -- -lv4l1 samples/* modules/* | xargs sed -i 's/-lv4l1/-lv4l1 -lv4l2/g'")
+
+message(STATUS "\n\nYou may then compile:\n\n make -j8 && sudo make install && sudo ldconfig -v")
+
 
 include(cmake/OpenCVPackaging.cmake)
