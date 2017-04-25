@@ -42,8 +42,9 @@
 /* Haar features calculation */
 
 #include "precomp.hpp"
+#include "opencv2/imgproc/imgproc_c.h"
+#include "opencv2/objdetect/objdetect_c.h"
 #include <stdio.h>
-#include "opencv2/core/internal.hpp"
 
 #if CV_SSE2
 #   if 1 /*!CV_SSE4_1 && !CV_SSE4_2*/
@@ -158,13 +159,17 @@ icvReleaseHidHaarClassifierCascade( CvHidHaarClassifierCascade** _cascade )
     {
 #ifdef HAVE_IPP
         CvHidHaarClassifierCascade* cascade = *_cascade;
-        if( cascade->ipp_stages )
+        if( CV_IPP_CHECK_COND && cascade->ipp_stages )
         {
             int i;
             for( i = 0; i < cascade->count; i++ )
             {
                 if( cascade->ipp_stages[i] )
+#if IPP_VERSION_X100 < 900
                     ippiHaarClassifierFree_32f( (IppiHaarClassifier_32f*)cascade->ipp_stages[i] );
+#else
+                    cvFree(&cascade->ipp_stages[i]);
+#endif
             }
         }
         cvFree( &cascade->ipp_stages );
@@ -337,7 +342,7 @@ icvCreateHidHaarClassifierCascade( CvHaarClassifierCascade* cascade )
     }
 /*
 #ifdef HAVE_IPP
-    int can_use_ipp = !out->has_tilted_features && !out->is_tree && out->isStumpBased;
+    int can_use_ipp = CV_IPP_CHECK_COND && (!out->has_tilted_features && !out->is_tree && out->isStumpBased);
 
     if( can_use_ipp )
     {
@@ -819,10 +824,7 @@ cvRunHaarClassifierCascadeSum( const CvHaarClassifierCascade* _cascade,
                                CvPoint pt, double& stage_sum, int start_stage )
 {
 #ifdef CV_HAAR_USE_AVX
-    bool haveAVX = false;
-    if(cv::checkHardwareSupport(CV_CPU_AVX))
-    if(__xgetbv()&0x6)// Check if the OS will save the YMM registers
-       haveAVX = true;
+    bool haveAVX = cv::checkHardwareSupport(CV_CPU_AVX);
 #else
 #  ifdef CV_HAAR_USE_SSE
     bool haveSSE2 = cv::checkHardwareSupport(CV_CPU_SSE2);
@@ -854,7 +856,7 @@ cvRunHaarClassifierCascadeSum( const CvHaarClassifierCascade* _cascade,
                            cascade->pq2[pq_offset] + cascade->pq3[pq_offset];
     variance_norm_factor = variance_norm_factor*cascade->inv_window_area - mean*mean;
     if( variance_norm_factor >= 0. )
-        variance_norm_factor = sqrt(variance_norm_factor);
+        variance_norm_factor = std::sqrt(variance_norm_factor);
     else
         variance_norm_factor = 1.;
 
@@ -1270,6 +1272,8 @@ CV_IMPL int
 cvRunHaarClassifierCascade( const CvHaarClassifierCascade* _cascade,
                             CvPoint pt, int start_stage )
 {
+    CV_INSTRUMENT_REGION()
+
     double stage_sum;
     return cvRunHaarClassifierCascadeSum(_cascade, pt, stage_sum, start_stage);
 }
@@ -1303,9 +1307,11 @@ public:
 
     void operator()( const Range& range ) const
     {
+        CV_INSTRUMENT_REGION()
+
         Size winSize0 = cascade->orig_window_size;
         Size winSize(cvRound(winSize0.width*factor), cvRound(winSize0.height*factor));
-        int y1 = range.start*stripSize, y2 = min(range.end*stripSize, sum1.rows - 1 - winSize0.height);
+        int y1 = range.start*stripSize, y2 = std::min(range.end*stripSize, sum1.rows - 1 - winSize0.height);
 
         if (y2 <= y1 || sum1.cols <= 1 + winSize0.width)
             return;
@@ -1314,13 +1320,13 @@ public:
         int x, y, ystep = factor > 2 ? 1 : 2;
 
 #ifdef HAVE_IPP
-        if( cascade->hid_cascade->ipp_stages )
+        if(CV_IPP_CHECK_COND && cascade->hid_cascade->ipp_stages )
         {
             IppiRect iequRect = {equRect.x, equRect.y, equRect.width, equRect.height};
-            ippiRectStdDev_32f_C1R(sum1.ptr<float>(y1), (int)sum1.step,
+            CV_INSTRUMENT_FUN_IPP(ippiRectStdDev_32f_C1R, sum1.ptr<float>(y1), (int)sum1.step,
                                    sqsum1.ptr<double>(y1), (int)sqsum1.step,
                                    norm1->ptr<float>(y1), (int)norm1->step,
-                                   ippiSize(ssz.width, ssz.height), iequRect );
+                                   ippiSize(ssz.width, ssz.height), iequRect);
 
             int positive = (ssz.width/ystep)*((ssz.height + ystep-1)/ystep);
 
@@ -1339,7 +1345,7 @@ public:
 
             for( int j = 0; j < cascade->count; j++ )
             {
-                if( ippiApplyHaarClassifier_32f_C1R(
+                if (CV_INSTRUMENT_FUN_IPP(ippiApplyHaarClassifier_32f_C1R,
                             sum1.ptr<float>(y1), (int)sum1.step,
                             norm1->ptr<float>(y1), (int)norm1->step,
                             mask1->ptr<uchar>(y1), (int)mask1->step,
@@ -1350,6 +1356,7 @@ public:
                 if( positive <= 0 )
                     break;
             }
+            CV_IMPL_ADD(CV_IMPL_IPP|CV_IMPL_MT);
 
             if( positive > 0 )
                 for( y = y1; y < y2; y += ystep )
@@ -1435,6 +1442,8 @@ public:
 
     void operator()( const Range& range ) const
     {
+        CV_INSTRUMENT_REGION()
+
         int iy, startY = range.start, endY = range.end;
         const int *p0 = p[0], *p1 = p[1], *p2 = p[2], *p3 = p[3];
         const int *pq0 = pq[0], *pq1 = pq[1], *pq2 = pq[2], *pq3 = pq[3];
@@ -1494,6 +1503,8 @@ cvHaarDetectObjectsForROC( const CvArr* _img,
                      double scaleFactor, int minNeighbors, int flags,
                      CvSize minSize, CvSize maxSize, bool outputRejectLevels )
 {
+    CV_INSTRUMENT_REGION()
+
     const double GROUP_EPS = 0.2;
     CvMat stub, *img = (CvMat*)_img;
     cv::Ptr<CvMat> temp, sum, tilted, sqsum, normImg, sumcanny, imgSmall;
@@ -1535,15 +1546,15 @@ cvHaarDetectObjectsForROC( const CvArr* _img,
         maxSize.width = img->cols;
     }
 
-    temp = cvCreateMat( img->rows, img->cols, CV_8UC1 );
-    sum = cvCreateMat( img->rows + 1, img->cols + 1, CV_32SC1 );
-    sqsum = cvCreateMat( img->rows + 1, img->cols + 1, CV_64FC1 );
+    temp.reset(cvCreateMat( img->rows, img->cols, CV_8UC1 ));
+    sum.reset(cvCreateMat( img->rows + 1, img->cols + 1, CV_32SC1 ));
+    sqsum.reset(cvCreateMat( img->rows + 1, img->cols + 1, CV_64FC1 ));
 
     if( !cascade->hid_cascade )
         icvCreateHidHaarClassifierCascade(cascade);
 
     if( cascade->hid_cascade->has_tilted_features )
-        tilted = cvCreateMat( img->rows + 1, img->cols + 1, CV_32SC1 );
+        tilted.reset(cvCreateMat( img->rows + 1, img->cols + 1, CV_32SC1 ));
 
     result_seq = cvCreateSeq( 0, sizeof(CvSeq), sizeof(CvAvgComp), storage );
 
@@ -1560,23 +1571,23 @@ cvHaarDetectObjectsForROC( const CvArr* _img,
     {
         CvSize winSize0 = cascade->orig_window_size;
 #ifdef HAVE_IPP
-        int use_ipp = cascade->hid_cascade->ipp_stages != 0;
+        int use_ipp = CV_IPP_CHECK_COND && (cascade->hid_cascade->ipp_stages != 0);
 
         if( use_ipp )
-            normImg = cvCreateMat( img->rows, img->cols, CV_32FC1 );
+            normImg.reset(cvCreateMat( img->rows, img->cols, CV_32FC1));
 #endif
-        imgSmall = cvCreateMat( img->rows + 1, img->cols + 1, CV_8UC1 );
+        imgSmall.reset(cvCreateMat( img->rows + 1, img->cols + 1, CV_8UC1 ));
 
         for( factor = 1; ; factor *= scaleFactor )
         {
-            CvSize winSize = { cvRound(winSize0.width*factor),
-                                cvRound(winSize0.height*factor) };
-            CvSize sz = { cvRound( img->cols/factor ), cvRound( img->rows/factor ) };
-            CvSize sz1 = { sz.width - winSize0.width + 1, sz.height - winSize0.height + 1 };
+            CvSize winSize(cvRound(winSize0.width*factor),
+                                cvRound(winSize0.height*factor));
+            CvSize sz(cvRound( img->cols/factor ), cvRound( img->rows/factor ));
+            CvSize sz1(sz.width - winSize0.width + 1, sz.height - winSize0.height + 1);
 
-            CvRect equRect = { icv_object_win_border, icv_object_win_border,
+            CvRect equRect(icv_object_win_border, icv_object_win_border,
                 winSize0.width - icv_object_win_border*2,
-                winSize0.height - icv_object_win_border*2 };
+                winSize0.height - icv_object_win_border*2);
 
             CvMat img1, sum1, sqsum1, norm1, tilted1, mask1;
             CvMat* _tilted = 0;
@@ -1611,17 +1622,17 @@ cvHaarDetectObjectsForROC( const CvArr* _img,
             if( use_ipp )
             {
                 cv::Mat fsum(sum1.rows, sum1.cols, CV_32F, sum1.data.ptr, sum1.step);
-                cv::Mat(&sum1).convertTo(fsum, CV_32F, 1, -(1<<24));
+                cv::cvarrToMat(&sum1).convertTo(fsum, CV_32F, 1, -(1<<24));
             }
             else
 #endif
                 cvSetImagesForHaarClassifierCascade( cascade, &sum1, &sqsum1, _tilted, 1. );
 
-            cv::Mat _norm1(&norm1), _mask1(&mask1);
+            cv::Mat _norm1 = cv::cvarrToMat(&norm1), _mask1 = cv::cvarrToMat(&mask1);
             cv::parallel_for_(cv::Range(0, stripCount),
                          cv::HaarDetectObjects_ScaleImage_Invoker(cascade,
                                 (((sz1.height + stripCount - 1)/stripCount + ystep-1)/ystep)*ystep,
-                                factor, cv::Mat(&sum1), cv::Mat(&sqsum1), &_norm1, &_mask1,
+                                factor, cv::cvarrToMat(&sum1), cv::cvarrToMat(&sqsum1), &_norm1, &_mask1,
                                 cv::Rect(equRect), allCandidates, rejectLevels, levelWeights, outputRejectLevels, &mtx));
         }
     }
@@ -1634,7 +1645,7 @@ cvHaarDetectObjectsForROC( const CvArr* _img,
 
         if( doCannyPruning )
         {
-            sumcanny = cvCreateMat( img->rows + 1, img->cols + 1, CV_32SC1 );
+            sumcanny.reset(cvCreateMat( img->rows + 1, img->cols + 1, CV_32SC1 ));
             cvCanny( img, temp, 0, 50, 3 );
             cvIntegral( temp, sumcanny );
         }
@@ -1656,9 +1667,9 @@ cvHaarDetectObjectsForROC( const CvArr* _img,
         for( ; n_factors-- > 0; factor *= scaleFactor )
         {
             const double ystep = std::max( 2., factor );
-            CvSize winSize = { cvRound( cascade->orig_window_size.width * factor ),
-                                cvRound( cascade->orig_window_size.height * factor )};
-            CvRect equRect = { 0, 0, 0, 0 };
+            CvSize winSize(cvRound( cascade->orig_window_size.width * factor ),
+                                cvRound( cascade->orig_window_size.height * factor ));
+            CvRect equRect;
             int *p[4] = {0,0,0,0};
             int *pq[4] = {0,0,0,0};
             int startX = 0, startY = 0;
@@ -1775,7 +1786,7 @@ cvHaarDetectObjectsForROC( const CvArr* _img,
 
     if( findBiggestObject && rectList.size() )
     {
-        CvAvgComp result_comp = {{0,0,0,0},0};
+        CvAvgComp result_comp = {CvRect(),0};
 
         for( size_t i = 0; i < rectList.size(); i++ )
         {

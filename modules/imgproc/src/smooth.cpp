@@ -12,6 +12,7 @@
 //
 // Copyright (C) 2000-2008, Intel Corporation, all rights reserved.
 // Copyright (C) 2009, Willow Garage Inc., all rights reserved.
+// Copyright (C) 2014-2015, Itseez Inc., all rights reserved.
 // Third party copyrights are property of their respective owners.
 //
 // Redistribution and use in source and binary forms, with or without modification,
@@ -41,6 +42,9 @@
 //M*/
 
 #include "precomp.hpp"
+#include "opencl_kernels_imgproc.hpp"
+
+#include "opencv2/core/openvx/ovx_defs.hpp"
 
 /*
  * This file includes the code, contributed by Simon Perreault
@@ -66,40 +70,121 @@ namespace cv
                                          Box Filter
 \****************************************************************************************/
 
-template<typename T, typename ST> struct RowSum : public BaseRowFilter
+template<typename T, typename ST>
+struct RowSum :
+        public BaseRowFilter
 {
-    RowSum( int _ksize, int _anchor )
+    RowSum( int _ksize, int _anchor ) :
+        BaseRowFilter()
     {
         ksize = _ksize;
         anchor = _anchor;
     }
 
-    void operator()(const uchar* src, uchar* dst, int width, int cn)
+    virtual void operator()(const uchar* src, uchar* dst, int width, int cn)
     {
         const T* S = (const T*)src;
         ST* D = (ST*)dst;
         int i = 0, k, ksz_cn = ksize*cn;
 
         width = (width - 1)*cn;
-        for( k = 0; k < cn; k++, S++, D++ )
+        if( ksize == 3 )
         {
-            ST s = 0;
-            for( i = 0; i < ksz_cn; i += cn )
-                s += S[i];
-            D[0] = s;
-            for( i = 0; i < width; i += cn )
+            for( i = 0; i < width + cn; i++ )
             {
-                s += S[i + ksz_cn] - S[i];
-                D[i+cn] = s;
+                D[i] = (ST)S[i] + (ST)S[i+cn] + (ST)S[i+cn*2];
             }
         }
+        else if( ksize == 5 )
+        {
+            for( i = 0; i < width + cn; i++ )
+            {
+                D[i] = (ST)S[i] + (ST)S[i+cn] + (ST)S[i+cn*2] + (ST)S[i + cn*3] + (ST)S[i + cn*4];
+            }
+        }
+        else if( cn == 1 )
+        {
+            ST s = 0;
+            for( i = 0; i < ksz_cn; i++ )
+                s += (ST)S[i];
+            D[0] = s;
+            for( i = 0; i < width; i++ )
+            {
+                s += (ST)S[i + ksz_cn] - (ST)S[i];
+                D[i+1] = s;
+            }
+        }
+        else if( cn == 3 )
+        {
+            ST s0 = 0, s1 = 0, s2 = 0;
+            for( i = 0; i < ksz_cn; i += 3 )
+            {
+                s0 += (ST)S[i];
+                s1 += (ST)S[i+1];
+                s2 += (ST)S[i+2];
+            }
+            D[0] = s0;
+            D[1] = s1;
+            D[2] = s2;
+            for( i = 0; i < width; i += 3 )
+            {
+                s0 += (ST)S[i + ksz_cn] - (ST)S[i];
+                s1 += (ST)S[i + ksz_cn + 1] - (ST)S[i + 1];
+                s2 += (ST)S[i + ksz_cn + 2] - (ST)S[i + 2];
+                D[i+3] = s0;
+                D[i+4] = s1;
+                D[i+5] = s2;
+            }
+        }
+        else if( cn == 4 )
+        {
+            ST s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+            for( i = 0; i < ksz_cn; i += 4 )
+            {
+                s0 += (ST)S[i];
+                s1 += (ST)S[i+1];
+                s2 += (ST)S[i+2];
+                s3 += (ST)S[i+3];
+            }
+            D[0] = s0;
+            D[1] = s1;
+            D[2] = s2;
+            D[3] = s3;
+            for( i = 0; i < width; i += 4 )
+            {
+                s0 += (ST)S[i + ksz_cn] - (ST)S[i];
+                s1 += (ST)S[i + ksz_cn + 1] - (ST)S[i + 1];
+                s2 += (ST)S[i + ksz_cn + 2] - (ST)S[i + 2];
+                s3 += (ST)S[i + ksz_cn + 3] - (ST)S[i + 3];
+                D[i+4] = s0;
+                D[i+5] = s1;
+                D[i+6] = s2;
+                D[i+7] = s3;
+            }
+        }
+        else
+            for( k = 0; k < cn; k++, S++, D++ )
+            {
+                ST s = 0;
+                for( i = 0; i < ksz_cn; i += cn )
+                    s += (ST)S[i];
+                D[0] = s;
+                for( i = 0; i < width; i += cn )
+                {
+                    s += (ST)S[i + ksz_cn] - (ST)S[i];
+                    D[i+cn] = s;
+                }
+            }
     }
 };
 
 
-template<typename ST, typename T> struct ColumnSum : public BaseColumnFilter
+template<typename ST, typename T>
+struct ColumnSum :
+        public BaseColumnFilter
 {
-    ColumnSum( int _ksize, int _anchor, double _scale )
+    ColumnSum( int _ksize, int _anchor, double _scale ) :
+        BaseColumnFilter()
     {
         ksize = _ksize;
         anchor = _anchor;
@@ -107,9 +192,9 @@ template<typename ST, typename T> struct ColumnSum : public BaseColumnFilter
         sumCount = 0;
     }
 
-    void reset() { sumCount = 0; }
+    virtual void reset() { sumCount = 0; }
 
-    void operator()(const uchar** src, uchar* dst, int dststep, int count, int width)
+    virtual void operator()(const uchar** src, uchar* dst, int dststep, int count, int width)
     {
         int i;
         ST* SUM;
@@ -125,18 +210,13 @@ template<typename ST, typename T> struct ColumnSum : public BaseColumnFilter
         SUM = &sum[0];
         if( sumCount == 0 )
         {
-            for( i = 0; i < width; i++ )
-                SUM[i] = 0;
+            memset((void*)SUM, 0, width*sizeof(ST));
+
             for( ; sumCount < ksize - 1; sumCount++, src++ )
             {
                 const ST* Sp = (const ST*)src[0];
-                for( i = 0; i <= width - 2; i += 2 )
-                {
-                    ST s0 = SUM[i] + Sp[i], s1 = SUM[i+1] + Sp[i+1];
-                    SUM[i] = s0; SUM[i+1] = s1;
-                }
 
-                for( ; i < width; i++ )
+                for( i = 0; i < width; i++ )
                     SUM[i] += Sp[i];
             }
         }
@@ -193,13 +273,16 @@ template<typename ST, typename T> struct ColumnSum : public BaseColumnFilter
 
     double scale;
     int sumCount;
-    vector<ST> sum;
+    std::vector<ST> sum;
 };
 
 
-template<> struct ColumnSum<int, uchar> : public BaseColumnFilter
+template<>
+struct ColumnSum<int, uchar> :
+        public BaseColumnFilter
 {
-    ColumnSum( int _ksize, int _anchor, double _scale )
+    ColumnSum( int _ksize, int _anchor, double _scale ) :
+        BaseColumnFilter()
     {
         ksize = _ksize;
         anchor = _anchor;
@@ -207,17 +290,18 @@ template<> struct ColumnSum<int, uchar> : public BaseColumnFilter
         sumCount = 0;
     }
 
-    void reset() { sumCount = 0; }
+    virtual void reset() { sumCount = 0; }
 
-    void operator()(const uchar** src, uchar* dst, int dststep, int count, int width)
+    virtual void operator()(const uchar** src, uchar* dst, int dststep, int count, int width)
     {
-        int i;
         int* SUM;
         bool haveScale = scale != 1;
         double _scale = scale;
 
         #if CV_SSE2
             bool haveSSE2 = checkHardwareSupport(CV_CPU_SSE2);
+        #elif CV_NEON
+            bool haveNEON = checkHardwareSupport(CV_CPU_NEON);
         #endif
 
         if( width != (int)sum.size() )
@@ -233,16 +317,22 @@ template<> struct ColumnSum<int, uchar> : public BaseColumnFilter
             for( ; sumCount < ksize - 1; sumCount++, src++ )
             {
                 const int* Sp = (const int*)src[0];
-                i = 0;
+                int i = 0;
                 #if CV_SSE2
                 if(haveSSE2)
                 {
-                    for( ; i < width-4; i+=4 )
+                    for( ; i <= width-4; i+=4 )
                     {
                         __m128i _sum = _mm_loadu_si128((const __m128i*)(SUM+i));
                         __m128i _sp = _mm_loadu_si128((const __m128i*)(Sp+i));
                         _mm_storeu_si128((__m128i*)(SUM+i),_mm_add_epi32(_sum, _sp));
                     }
+                }
+                #elif CV_NEON
+                if(haveNEON)
+                {
+                    for( ; i <= width - 4; i+=4 )
+                        vst1q_s32(SUM + i, vaddq_s32(vld1q_s32(SUM + i), vld1q_s32(Sp + i)));
                 }
                 #endif
                 for( ; i < width; i++ )
@@ -262,12 +352,12 @@ template<> struct ColumnSum<int, uchar> : public BaseColumnFilter
             uchar* D = (uchar*)dst;
             if( haveScale )
             {
-                i = 0;
+                int i = 0;
                 #if CV_SSE2
                 if(haveSSE2)
                 {
                     const __m128 scale4 = _mm_set1_ps((float)_scale);
-                    for( ; i < width-8; i+=8 )
+                    for( ; i <= width-8; i+=8 )
                     {
                         __m128i _sm  = _mm_loadu_si128((const __m128i*)(Sm+i));
                         __m128i _sm1  = _mm_loadu_si128((const __m128i*)(Sm+i+4));
@@ -288,6 +378,25 @@ template<> struct ColumnSum<int, uchar> : public BaseColumnFilter
                         _mm_storeu_si128((__m128i*)(SUM+i+4),_mm_sub_epi32(_s01,_sm1));
                     }
                 }
+                #elif CV_NEON
+                if(haveNEON)
+                {
+                    float32x4_t v_scale = vdupq_n_f32((float)_scale);
+                    for( ; i <= width-8; i+=8 )
+                    {
+                        int32x4_t v_s0 = vaddq_s32(vld1q_s32(SUM + i), vld1q_s32(Sp + i));
+                        int32x4_t v_s01 = vaddq_s32(vld1q_s32(SUM + i + 4), vld1q_s32(Sp + i + 4));
+
+                        uint32x4_t v_s0d = cv_vrndq_u32_f32(vmulq_f32(vcvtq_f32_s32(v_s0), v_scale));
+                        uint32x4_t v_s01d = cv_vrndq_u32_f32(vmulq_f32(vcvtq_f32_s32(v_s01), v_scale));
+
+                        uint16x8_t v_dst = vcombine_u16(vqmovn_u32(v_s0d), vqmovn_u32(v_s01d));
+                        vst1_u8(D + i, vqmovn_u16(v_dst));
+
+                        vst1q_s32(SUM + i, vsubq_s32(v_s0, vld1q_s32(Sm + i)));
+                        vst1q_s32(SUM + i + 4, vsubq_s32(v_s01, vld1q_s32(Sm + i + 4)));
+                    }
+                }
                 #endif
                 for( ; i < width; i++ )
                 {
@@ -298,11 +407,11 @@ template<> struct ColumnSum<int, uchar> : public BaseColumnFilter
             }
             else
             {
-                i = 0;
+                int i = 0;
                 #if CV_SSE2
                 if(haveSSE2)
                 {
-                    for( ; i < width-8; i+=8 )
+                    for( ; i <= width-8; i+=8 )
                     {
                         __m128i _sm  = _mm_loadu_si128((const __m128i*)(Sm+i));
                         __m128i _sm1  = _mm_loadu_si128((const __m128i*)(Sm+i+4));
@@ -320,6 +429,21 @@ template<> struct ColumnSum<int, uchar> : public BaseColumnFilter
                         _mm_storeu_si128((__m128i*)(SUM+i+4),_mm_sub_epi32(_s01,_sm1));
                     }
                 }
+                #elif CV_NEON
+                if(haveNEON)
+                {
+                    for( ; i <= width-8; i+=8 )
+                    {
+                        int32x4_t v_s0 = vaddq_s32(vld1q_s32(SUM + i), vld1q_s32(Sp + i));
+                        int32x4_t v_s01 = vaddq_s32(vld1q_s32(SUM + i + 4), vld1q_s32(Sp + i + 4));
+
+                        uint16x8_t v_dst = vcombine_u16(vqmovun_s32(v_s0), vqmovun_s32(v_s01));
+                        vst1_u8(D + i, vqmovn_u16(v_dst));
+
+                        vst1q_s32(SUM + i, vsubq_s32(v_s0, vld1q_s32(Sm + i)));
+                        vst1q_s32(SUM + i + 4, vsubq_s32(v_s01, vld1q_s32(Sm + i + 4)));
+                    }
+                }
                 #endif
 
                 for( ; i < width; i++ )
@@ -335,12 +459,161 @@ template<> struct ColumnSum<int, uchar> : public BaseColumnFilter
 
     double scale;
     int sumCount;
-    vector<int> sum;
+    std::vector<int> sum;
 };
 
-template<> struct ColumnSum<int, short> : public BaseColumnFilter
+
+template<>
+struct ColumnSum<ushort, uchar> :
+public BaseColumnFilter
 {
-    ColumnSum( int _ksize, int _anchor, double _scale )
+    ColumnSum( int _ksize, int _anchor, double _scale ) :
+    BaseColumnFilter()
+    {
+        ksize = _ksize;
+        anchor = _anchor;
+        scale = _scale;
+        sumCount = 0;
+        divDelta = 0;
+        divScale = 1;
+        if( scale != 1 )
+        {
+            int d = cvRound(1./scale);
+            double scalef = ((double)(1 << 16))/d;
+            divScale = cvFloor(scalef);
+            scalef -= divScale;
+            divDelta = d/2;
+            if( scalef < 0.5 )
+                divDelta++;
+            else
+                divScale++;
+        }
+    }
+
+    virtual void reset() { sumCount = 0; }
+
+    virtual void operator()(const uchar** src, uchar* dst, int dststep, int count, int width)
+    {
+        const int ds = divScale;
+        const int dd = divDelta;
+        ushort* SUM;
+        const bool haveScale = scale != 1;
+
+#if CV_SSE2
+        bool haveSSE2 = checkHardwareSupport(CV_CPU_SSE2);
+#elif CV_NEON
+        bool haveNEON = checkHardwareSupport(CV_CPU_NEON);
+#endif
+
+        if( width != (int)sum.size() )
+        {
+            sum.resize(width);
+            sumCount = 0;
+        }
+
+        SUM = &sum[0];
+        if( sumCount == 0 )
+        {
+            memset((void*)SUM, 0, width*sizeof(SUM[0]));
+            for( ; sumCount < ksize - 1; sumCount++, src++ )
+            {
+                const ushort* Sp = (const ushort*)src[0];
+                int i = 0;
+#if CV_SSE2
+                if(haveSSE2)
+                {
+                    for( ; i <= width-8; i+=8 )
+                    {
+                        __m128i _sum = _mm_loadu_si128((const __m128i*)(SUM+i));
+                        __m128i _sp = _mm_loadu_si128((const __m128i*)(Sp+i));
+                        _mm_storeu_si128((__m128i*)(SUM+i),_mm_add_epi16(_sum, _sp));
+                    }
+                }
+#elif CV_NEON
+                if(haveNEON)
+                {
+                    for( ; i <= width - 8; i+=8 )
+                        vst1q_u16(SUM + i, vaddq_u16(vld1q_u16(SUM + i), vld1q_u16(Sp + i)));
+                }
+#endif
+                for( ; i < width; i++ )
+                    SUM[i] += Sp[i];
+            }
+        }
+        else
+        {
+            CV_Assert( sumCount == ksize-1 );
+            src += ksize-1;
+        }
+
+        for( ; count--; src++ )
+        {
+            const ushort* Sp = (const ushort*)src[0];
+            const ushort* Sm = (const ushort*)src[1-ksize];
+            uchar* D = (uchar*)dst;
+            if( haveScale )
+            {
+                int i = 0;
+    #if CV_SSE2
+                if(haveSSE2)
+                {
+                    __m128i ds8 = _mm_set1_epi16((short)ds);
+                    __m128i dd8 = _mm_set1_epi16((short)dd);
+
+                    for( ; i <= width-16; i+=16 )
+                    {
+                        __m128i _sm0  = _mm_loadu_si128((const __m128i*)(Sm+i));
+                        __m128i _sm1  = _mm_loadu_si128((const __m128i*)(Sm+i+8));
+
+                        __m128i _s0  = _mm_add_epi16(_mm_loadu_si128((const __m128i*)(SUM+i)),
+                                                     _mm_loadu_si128((const __m128i*)(Sp+i)));
+                        __m128i _s1  = _mm_add_epi16(_mm_loadu_si128((const __m128i*)(SUM+i+8)),
+                                                     _mm_loadu_si128((const __m128i*)(Sp+i+8)));
+                        __m128i _s2 = _mm_mulhi_epu16(_mm_adds_epu16(_s0, dd8), ds8);
+                        __m128i _s3 = _mm_mulhi_epu16(_mm_adds_epu16(_s1, dd8), ds8);
+                        _s0 = _mm_sub_epi16(_s0, _sm0);
+                        _s1 = _mm_sub_epi16(_s1, _sm1);
+                        _mm_storeu_si128((__m128i*)(D+i), _mm_packus_epi16(_s2, _s3));
+                        _mm_storeu_si128((__m128i*)(SUM+i), _s0);
+                        _mm_storeu_si128((__m128i*)(SUM+i+8), _s1);
+                    }
+                }
+    #endif
+                for( ; i < width; i++ )
+                {
+                    int s0 = SUM[i] + Sp[i];
+                    D[i] = (uchar)((s0 + dd)*ds >> 16);
+                    SUM[i] = (ushort)(s0 - Sm[i]);
+                }
+            }
+            else
+            {
+                int i = 0;
+                for( ; i < width; i++ )
+                {
+                    int s0 = SUM[i] + Sp[i];
+                    D[i] = saturate_cast<uchar>(s0);
+                    SUM[i] = (ushort)(s0 - Sm[i]);
+                }
+            }
+            dst += dststep;
+        }
+    }
+
+    double scale;
+    int sumCount;
+    int divDelta;
+    int divScale;
+    std::vector<ushort> sum;
+};
+
+
+template<>
+struct ColumnSum<int, short> :
+        public BaseColumnFilter
+{
+    ColumnSum( int _ksize, int _anchor, double _scale ) :
+        BaseColumnFilter()
     {
         ksize = _ksize;
         anchor = _anchor;
@@ -348,9 +621,9 @@ template<> struct ColumnSum<int, short> : public BaseColumnFilter
         sumCount = 0;
     }
 
-    void reset() { sumCount = 0; }
+    virtual void reset() { sumCount = 0; }
 
-    void operator()(const uchar** src, uchar* dst, int dststep, int count, int width)
+    virtual void operator()(const uchar** src, uchar* dst, int dststep, int count, int width)
     {
         int i;
         int* SUM;
@@ -359,6 +632,8 @@ template<> struct ColumnSum<int, short> : public BaseColumnFilter
 
         #if CV_SSE2
             bool haveSSE2 = checkHardwareSupport(CV_CPU_SSE2);
+        #elif CV_NEON
+            bool haveNEON = checkHardwareSupport(CV_CPU_NEON);
         #endif
 
         if( width != (int)sum.size() )
@@ -366,6 +641,7 @@ template<> struct ColumnSum<int, short> : public BaseColumnFilter
             sum.resize(width);
             sumCount = 0;
         }
+
         SUM = &sum[0];
         if( sumCount == 0 )
         {
@@ -377,12 +653,18 @@ template<> struct ColumnSum<int, short> : public BaseColumnFilter
                 #if CV_SSE2
                 if(haveSSE2)
                 {
-                    for( ; i < width-4; i+=4 )
+                    for( ; i <= width-4; i+=4 )
                     {
                         __m128i _sum = _mm_loadu_si128((const __m128i*)(SUM+i));
                         __m128i _sp = _mm_loadu_si128((const __m128i*)(Sp+i));
                         _mm_storeu_si128((__m128i*)(SUM+i),_mm_add_epi32(_sum, _sp));
                     }
+                }
+                #elif CV_NEON
+                if(haveNEON)
+                {
+                    for( ; i <= width - 4; i+=4 )
+                        vst1q_s32(SUM + i, vaddq_s32(vld1q_s32(SUM + i), vld1q_s32(Sp + i)));
                 }
                 #endif
                 for( ; i < width; i++ )
@@ -407,7 +689,7 @@ template<> struct ColumnSum<int, short> : public BaseColumnFilter
                 if(haveSSE2)
                 {
                     const __m128 scale4 = _mm_set1_ps((float)_scale);
-                    for( ; i < width-8; i+=8 )
+                    for( ; i <= width-8; i+=8 )
                     {
                         __m128i _sm   = _mm_loadu_si128((const __m128i*)(Sm+i));
                         __m128i _sm1  = _mm_loadu_si128((const __m128i*)(Sm+i+4));
@@ -426,6 +708,23 @@ template<> struct ColumnSum<int, short> : public BaseColumnFilter
                         _mm_storeu_si128((__m128i*)(SUM+i+4), _mm_sub_epi32(_s01,_sm1));
                     }
                 }
+                #elif CV_NEON
+                if(haveNEON)
+                {
+                    float32x4_t v_scale = vdupq_n_f32((float)_scale);
+                    for( ; i <= width-8; i+=8 )
+                    {
+                        int32x4_t v_s0 = vaddq_s32(vld1q_s32(SUM + i), vld1q_s32(Sp + i));
+                        int32x4_t v_s01 = vaddq_s32(vld1q_s32(SUM + i + 4), vld1q_s32(Sp + i + 4));
+
+                        int32x4_t v_s0d = cv_vrndq_s32_f32(vmulq_f32(vcvtq_f32_s32(v_s0), v_scale));
+                        int32x4_t v_s01d = cv_vrndq_s32_f32(vmulq_f32(vcvtq_f32_s32(v_s01), v_scale));
+                        vst1q_s16(D + i, vcombine_s16(vqmovn_s32(v_s0d), vqmovn_s32(v_s01d)));
+
+                        vst1q_s32(SUM + i, vsubq_s32(v_s0, vld1q_s32(Sm + i)));
+                        vst1q_s32(SUM + i + 4, vsubq_s32(v_s01, vld1q_s32(Sm + i + 4)));
+                    }
+                }
                 #endif
                 for( ; i < width; i++ )
                 {
@@ -440,7 +739,7 @@ template<> struct ColumnSum<int, short> : public BaseColumnFilter
                 #if CV_SSE2
                 if(haveSSE2)
                 {
-                    for( ; i < width-8; i+=8 )
+                    for( ; i <= width-8; i+=8 )
                     {
 
                         __m128i _sm  = _mm_loadu_si128((const __m128i*)(Sm+i));
@@ -455,6 +754,20 @@ template<> struct ColumnSum<int, short> : public BaseColumnFilter
 
                         _mm_storeu_si128((__m128i*)(SUM+i), _mm_sub_epi32(_s0,_sm));
                         _mm_storeu_si128((__m128i*)(SUM+i+4),_mm_sub_epi32(_s01,_sm1));
+                    }
+                }
+                #elif CV_NEON
+                if(haveNEON)
+                {
+                    for( ; i <= width-8; i+=8 )
+                    {
+                        int32x4_t v_s0 = vaddq_s32(vld1q_s32(SUM + i), vld1q_s32(Sp + i));
+                        int32x4_t v_s01 = vaddq_s32(vld1q_s32(SUM + i + 4), vld1q_s32(Sp + i + 4));
+
+                        vst1q_s16(D + i, vcombine_s16(vqmovn_s32(v_s0), vqmovn_s32(v_s01)));
+
+                        vst1q_s32(SUM + i, vsubq_s32(v_s0, vld1q_s32(Sm + i)));
+                        vst1q_s32(SUM + i + 4, vsubq_s32(v_s01, vld1q_s32(Sm + i + 4)));
                     }
                 }
                 #endif
@@ -472,13 +785,16 @@ template<> struct ColumnSum<int, short> : public BaseColumnFilter
 
     double scale;
     int sumCount;
-    vector<int> sum;
+    std::vector<int> sum;
 };
 
 
-template<> struct ColumnSum<int, ushort> : public BaseColumnFilter
+template<>
+struct ColumnSum<int, ushort> :
+        public BaseColumnFilter
 {
-    ColumnSum( int _ksize, int _anchor, double _scale )
+    ColumnSum( int _ksize, int _anchor, double _scale ) :
+        BaseColumnFilter()
     {
         ksize = _ksize;
         anchor = _anchor;
@@ -486,16 +802,18 @@ template<> struct ColumnSum<int, ushort> : public BaseColumnFilter
         sumCount = 0;
     }
 
-    void reset() { sumCount = 0; }
+    virtual void reset() { sumCount = 0; }
 
-    void operator()(const uchar** src, uchar* dst, int dststep, int count, int width)
+    virtual void operator()(const uchar** src, uchar* dst, int dststep, int count, int width)
     {
-        int i;
         int* SUM;
         bool haveScale = scale != 1;
         double _scale = scale;
+
         #if CV_SSE2
-                bool haveSSE2 =  checkHardwareSupport(CV_CPU_SSE2);
+            bool haveSSE2 = checkHardwareSupport(CV_CPU_SSE2);
+        #elif CV_NEON
+            bool haveNEON = checkHardwareSupport(CV_CPU_NEON);
         #endif
 
         if( width != (int)sum.size() )
@@ -503,6 +821,7 @@ template<> struct ColumnSum<int, ushort> : public BaseColumnFilter
             sum.resize(width);
             sumCount = 0;
         }
+
         SUM = &sum[0];
         if( sumCount == 0 )
         {
@@ -510,16 +829,22 @@ template<> struct ColumnSum<int, ushort> : public BaseColumnFilter
             for( ; sumCount < ksize - 1; sumCount++, src++ )
             {
                 const int* Sp = (const int*)src[0];
-                i = 0;
+                int i = 0;
                 #if CV_SSE2
                 if(haveSSE2)
                 {
-                    for( ; i < width-4; i+=4 )
+                    for( ; i <= width-4; i+=4 )
                     {
                         __m128i _sum = _mm_loadu_si128((const __m128i*)(SUM+i));
                         __m128i _sp = _mm_loadu_si128((const __m128i*)(Sp+i));
-                        _mm_storeu_si128((__m128i*)(SUM+i), _mm_add_epi32(_sum, _sp));
+                        _mm_storeu_si128((__m128i*)(SUM+i),_mm_add_epi32(_sum, _sp));
                     }
+                }
+                #elif CV_NEON
+                if(haveNEON)
+                {
+                    for( ; i <= width - 4; i+=4 )
+                        vst1q_s32(SUM + i, vaddq_s32(vld1q_s32(SUM + i), vld1q_s32(Sp + i)));
                 }
                 #endif
                 for( ; i < width; i++ )
@@ -539,7 +864,7 @@ template<> struct ColumnSum<int, ushort> : public BaseColumnFilter
             ushort* D = (ushort*)dst;
             if( haveScale )
             {
-                i = 0;
+                int i = 0;
                 #if CV_SSE2
                 if(haveSSE2)
                 {
@@ -562,6 +887,23 @@ template<> struct ColumnSum<int, ushort> : public BaseColumnFilter
                         _mm_storeu_si128((__m128i*)(SUM+i), _mm_sub_epi32(_s0,_sm));
                     }
                 }
+                #elif CV_NEON
+                if(haveNEON)
+                {
+                    float32x4_t v_scale = vdupq_n_f32((float)_scale);
+                    for( ; i <= width-8; i+=8 )
+                    {
+                        int32x4_t v_s0 = vaddq_s32(vld1q_s32(SUM + i), vld1q_s32(Sp + i));
+                        int32x4_t v_s01 = vaddq_s32(vld1q_s32(SUM + i + 4), vld1q_s32(Sp + i + 4));
+
+                        uint32x4_t v_s0d = cv_vrndq_u32_f32(vmulq_f32(vcvtq_f32_s32(v_s0), v_scale));
+                        uint32x4_t v_s01d = cv_vrndq_u32_f32(vmulq_f32(vcvtq_f32_s32(v_s01), v_scale));
+                        vst1q_u16(D + i, vcombine_u16(vqmovn_u32(v_s0d), vqmovn_u32(v_s01d)));
+
+                        vst1q_s32(SUM + i, vsubq_s32(v_s0, vld1q_s32(Sm + i)));
+                        vst1q_s32(SUM + i + 4, vsubq_s32(v_s01, vld1q_s32(Sm + i + 4)));
+                    }
+                }
                 #endif
                 for( ; i < width; i++ )
                 {
@@ -572,8 +914,8 @@ template<> struct ColumnSum<int, ushort> : public BaseColumnFilter
             }
             else
             {
-                i = 0;
-                #if  CV_SSE2
+                int i = 0;
+                #if CV_SSE2
                 if(haveSSE2)
                 {
                     const __m128i delta0 = _mm_set1_epi32(0x8000);
@@ -592,6 +934,20 @@ template<> struct ColumnSum<int, ushort> : public BaseColumnFilter
                         _mm_storeu_si128((__m128i*)(SUM+i), _mm_sub_epi32(_s0,_sm));
                     }
                 }
+                #elif CV_NEON
+                if(haveNEON)
+                {
+                    for( ; i <= width-8; i+=8 )
+                    {
+                        int32x4_t v_s0 = vaddq_s32(vld1q_s32(SUM + i), vld1q_s32(Sp + i));
+                        int32x4_t v_s01 = vaddq_s32(vld1q_s32(SUM + i + 4), vld1q_s32(Sp + i + 4));
+
+                        vst1q_u16(D + i, vcombine_u16(vqmovun_s32(v_s0), vqmovun_s32(v_s01)));
+
+                        vst1q_s32(SUM + i, vsubq_s32(v_s0, vld1q_s32(Sm + i)));
+                        vst1q_s32(SUM + i + 4, vsubq_s32(v_s01, vld1q_s32(Sm + i + 4)));
+                    }
+                }
                 #endif
 
                 for( ; i < width; i++ )
@@ -607,11 +963,577 @@ template<> struct ColumnSum<int, ushort> : public BaseColumnFilter
 
     double scale;
     int sumCount;
-    vector<int> sum;
+    std::vector<int> sum;
+};
+
+template<>
+struct ColumnSum<int, int> :
+        public BaseColumnFilter
+{
+    ColumnSum( int _ksize, int _anchor, double _scale ) :
+        BaseColumnFilter()
+    {
+        ksize = _ksize;
+        anchor = _anchor;
+        scale = _scale;
+        sumCount = 0;
+    }
+
+    virtual void reset() { sumCount = 0; }
+
+    virtual void operator()(const uchar** src, uchar* dst, int dststep, int count, int width)
+    {
+        int* SUM;
+        bool haveScale = scale != 1;
+        double _scale = scale;
+
+        #if CV_SSE2
+            bool haveSSE2 = checkHardwareSupport(CV_CPU_SSE2);
+        #elif CV_NEON
+            bool haveNEON = checkHardwareSupport(CV_CPU_NEON);
+        #endif
+
+        if( width != (int)sum.size() )
+        {
+            sum.resize(width);
+            sumCount = 0;
+        }
+
+        SUM = &sum[0];
+        if( sumCount == 0 )
+        {
+            memset((void*)SUM, 0, width*sizeof(int));
+            for( ; sumCount < ksize - 1; sumCount++, src++ )
+            {
+                const int* Sp = (const int*)src[0];
+                int i = 0;
+                #if CV_SSE2
+                if(haveSSE2)
+                {
+                    for( ; i <= width-4; i+=4 )
+                    {
+                        __m128i _sum = _mm_loadu_si128((const __m128i*)(SUM+i));
+                        __m128i _sp = _mm_loadu_si128((const __m128i*)(Sp+i));
+                        _mm_storeu_si128((__m128i*)(SUM+i),_mm_add_epi32(_sum, _sp));
+                    }
+                }
+                #elif CV_NEON
+                if(haveNEON)
+                {
+                    for( ; i <= width - 4; i+=4 )
+                        vst1q_s32(SUM + i, vaddq_s32(vld1q_s32(SUM + i), vld1q_s32(Sp + i)));
+                }
+                #endif
+                for( ; i < width; i++ )
+                    SUM[i] += Sp[i];
+            }
+        }
+        else
+        {
+            CV_Assert( sumCount == ksize-1 );
+            src += ksize-1;
+        }
+
+        for( ; count--; src++ )
+        {
+            const int* Sp = (const int*)src[0];
+            const int* Sm = (const int*)src[1-ksize];
+            int* D = (int*)dst;
+            if( haveScale )
+            {
+                int i = 0;
+                #if CV_SSE2
+                if(haveSSE2)
+                {
+                    const __m128 scale4 = _mm_set1_ps((float)_scale);
+                    for( ; i <= width-4; i+=4 )
+                    {
+                        __m128i _sm   = _mm_loadu_si128((const __m128i*)(Sm+i));
+
+                        __m128i _s0  = _mm_add_epi32(_mm_loadu_si128((const __m128i*)(SUM+i)),
+                                                     _mm_loadu_si128((const __m128i*)(Sp+i)));
+
+                        __m128i _s0T  = _mm_cvtps_epi32(_mm_mul_ps(scale4, _mm_cvtepi32_ps(_s0)));
+
+                        _mm_storeu_si128((__m128i*)(D+i), _s0T);
+                        _mm_storeu_si128((__m128i*)(SUM+i),_mm_sub_epi32(_s0,_sm));
+                    }
+                }
+                #elif CV_NEON
+                if(haveNEON)
+                {
+                    float32x4_t v_scale = vdupq_n_f32((float)_scale);
+                    for( ; i <= width-4; i+=4 )
+                    {
+                        int32x4_t v_s0 = vaddq_s32(vld1q_s32(SUM + i), vld1q_s32(Sp + i));
+
+                        int32x4_t v_s0d = cv_vrndq_s32_f32(vmulq_f32(vcvtq_f32_s32(v_s0), v_scale));
+                        vst1q_s32(D + i, v_s0d);
+
+                        vst1q_s32(SUM + i, vsubq_s32(v_s0, vld1q_s32(Sm + i)));
+                    }
+                }
+                #endif
+                for( ; i < width; i++ )
+                {
+                    int s0 = SUM[i] + Sp[i];
+                    D[i] = saturate_cast<int>(s0*_scale);
+                    SUM[i] = s0 - Sm[i];
+                }
+            }
+            else
+            {
+                int i = 0;
+                #if CV_SSE2
+                if(haveSSE2)
+                {
+                    for( ; i <= width-4; i+=4 )
+                    {
+                        __m128i _sm  = _mm_loadu_si128((const __m128i*)(Sm+i));
+                        __m128i _s0  = _mm_add_epi32(_mm_loadu_si128((const __m128i*)(SUM+i)),
+                                                     _mm_loadu_si128((const __m128i*)(Sp+i)));
+
+                        _mm_storeu_si128((__m128i*)(D+i), _s0);
+                        _mm_storeu_si128((__m128i*)(SUM+i), _mm_sub_epi32(_s0,_sm));
+                    }
+                }
+                #elif CV_NEON
+                if(haveNEON)
+                {
+                    for( ; i <= width-4; i+=4 )
+                    {
+                        int32x4_t v_s0 = vaddq_s32(vld1q_s32(SUM + i), vld1q_s32(Sp + i));
+
+                        vst1q_s32(D + i, v_s0);
+                        vst1q_s32(SUM + i, vsubq_s32(v_s0, vld1q_s32(Sm + i)));
+                    }
+                }
+                #endif
+
+                for( ; i < width; i++ )
+                {
+                    int s0 = SUM[i] + Sp[i];
+                    D[i] = s0;
+                    SUM[i] = s0 - Sm[i];
+                }
+            }
+            dst += dststep;
+        }
+    }
+
+    double scale;
+    int sumCount;
+    std::vector<int> sum;
 };
 
 
+template<>
+struct ColumnSum<int, float> :
+        public BaseColumnFilter
+{
+    ColumnSum( int _ksize, int _anchor, double _scale ) :
+        BaseColumnFilter()
+    {
+        ksize = _ksize;
+        anchor = _anchor;
+        scale = _scale;
+        sumCount = 0;
+    }
+
+    virtual void reset() { sumCount = 0; }
+
+    virtual void operator()(const uchar** src, uchar* dst, int dststep, int count, int width)
+    {
+        int* SUM;
+        bool haveScale = scale != 1;
+        double _scale = scale;
+
+        #if CV_SSE2
+            bool haveSSE2 = checkHardwareSupport(CV_CPU_SSE2);
+        #elif CV_NEON
+            bool haveNEON = checkHardwareSupport(CV_CPU_NEON);
+        #endif
+
+        if( width != (int)sum.size() )
+        {
+            sum.resize(width);
+            sumCount = 0;
+        }
+
+        SUM = &sum[0];
+        if( sumCount == 0 )
+        {
+            memset((void*)SUM, 0, width*sizeof(int));
+            for( ; sumCount < ksize - 1; sumCount++, src++ )
+            {
+                const int* Sp = (const int*)src[0];
+                int i = 0;
+                #if CV_SSE2
+                if(haveSSE2)
+                {
+                    for( ; i <= width-4; i+=4 )
+                    {
+                        __m128i _sum = _mm_loadu_si128((const __m128i*)(SUM+i));
+                        __m128i _sp = _mm_loadu_si128((const __m128i*)(Sp+i));
+                        _mm_storeu_si128((__m128i*)(SUM+i),_mm_add_epi32(_sum, _sp));
+                    }
+                }
+                #elif CV_NEON
+                if(haveNEON)
+                {
+                    for( ; i <= width - 4; i+=4 )
+                        vst1q_s32(SUM + i, vaddq_s32(vld1q_s32(SUM + i), vld1q_s32(Sp + i)));
+                }
+                #endif
+
+                for( ; i < width; i++ )
+                    SUM[i] += Sp[i];
+            }
+        }
+        else
+        {
+            CV_Assert( sumCount == ksize-1 );
+            src += ksize-1;
+        }
+
+        for( ; count--; src++ )
+        {
+            const int * Sp = (const int*)src[0];
+            const int * Sm = (const int*)src[1-ksize];
+            float* D = (float*)dst;
+            if( haveScale )
+            {
+                int i = 0;
+
+                #if CV_SSE2
+                if(haveSSE2)
+                {
+                    const __m128 scale4 = _mm_set1_ps((float)_scale);
+
+                    for( ; i < width-4; i+=4)
+                    {
+                        __m128i _sm   = _mm_loadu_si128((const __m128i*)(Sm+i));
+                        __m128i _s0   = _mm_add_epi32(_mm_loadu_si128((const __m128i*)(SUM+i)),
+                                                      _mm_loadu_si128((const __m128i*)(Sp+i)));
+
+                        _mm_storeu_ps(D+i, _mm_mul_ps(scale4, _mm_cvtepi32_ps(_s0)));
+                        _mm_storeu_si128((__m128i*)(SUM+i), _mm_sub_epi32(_s0,_sm));
+                    }
+                }
+                #elif CV_NEON
+                if(haveNEON)
+                {
+                    float32x4_t v_scale = vdupq_n_f32((float)_scale);
+                    for( ; i <= width-8; i+=8 )
+                    {
+                        int32x4_t v_s0 = vaddq_s32(vld1q_s32(SUM + i), vld1q_s32(Sp + i));
+                        int32x4_t v_s01 = vaddq_s32(vld1q_s32(SUM + i + 4), vld1q_s32(Sp + i + 4));
+
+                        vst1q_f32(D + i, vmulq_f32(vcvtq_f32_s32(v_s0), v_scale));
+                        vst1q_f32(D + i + 4, vmulq_f32(vcvtq_f32_s32(v_s01), v_scale));
+
+                        vst1q_s32(SUM + i, vsubq_s32(v_s0, vld1q_s32(Sm + i)));
+                        vst1q_s32(SUM + i + 4, vsubq_s32(v_s01, vld1q_s32(Sm + i + 4)));
+                    }
+                }
+                #endif
+
+                for( ; i < width; i++ )
+                {
+                    int s0 = SUM[i] + Sp[i];
+                    D[i] = (float)(s0*_scale);
+                    SUM[i] = s0 - Sm[i];
+                }
+            }
+            else
+            {
+                int i = 0;
+
+                #if CV_SSE2
+                if(haveSSE2)
+                {
+                    for( ; i < width-4; i+=4)
+                    {
+                        __m128i _sm   = _mm_loadu_si128((const __m128i*)(Sm+i));
+                        __m128i _s0   = _mm_add_epi32(_mm_loadu_si128((const __m128i*)(SUM+i)),
+                                                      _mm_loadu_si128((const __m128i*)(Sp+i)));
+
+                        _mm_storeu_ps(D+i, _mm_cvtepi32_ps(_s0));
+                        _mm_storeu_si128((__m128i*)(SUM+i), _mm_sub_epi32(_s0,_sm));
+                    }
+                }
+                #elif CV_NEON
+                if(haveNEON)
+                {
+                    for( ; i <= width-8; i+=8 )
+                    {
+                        int32x4_t v_s0 = vaddq_s32(vld1q_s32(SUM + i), vld1q_s32(Sp + i));
+                        int32x4_t v_s01 = vaddq_s32(vld1q_s32(SUM + i + 4), vld1q_s32(Sp + i + 4));
+
+                        vst1q_f32(D + i, vcvtq_f32_s32(v_s0));
+                        vst1q_f32(D + i + 4, vcvtq_f32_s32(v_s01));
+
+                        vst1q_s32(SUM + i, vsubq_s32(v_s0, vld1q_s32(Sm + i)));
+                        vst1q_s32(SUM + i + 4, vsubq_s32(v_s01, vld1q_s32(Sm + i + 4)));
+                    }
+                }
+                #endif
+
+                for( ; i < width; i++ )
+                {
+                    int s0 = SUM[i] + Sp[i];
+                    D[i] = (float)(s0);
+                    SUM[i] = s0 - Sm[i];
+                }
+            }
+            dst += dststep;
+        }
+    }
+
+    double scale;
+    int sumCount;
+    std::vector<int> sum;
+};
+
+#ifdef HAVE_OPENCL
+
+static bool ocl_boxFilter3x3_8UC1( InputArray _src, OutputArray _dst, int ddepth,
+                                   Size ksize, Point anchor, int borderType, bool normalize )
+{
+    const ocl::Device & dev = ocl::Device::getDefault();
+    int type = _src.type(), sdepth = CV_MAT_DEPTH(type), cn = CV_MAT_CN(type);
+
+    if (ddepth < 0)
+        ddepth = sdepth;
+
+    if (anchor.x < 0)
+        anchor.x = ksize.width / 2;
+    if (anchor.y < 0)
+        anchor.y = ksize.height / 2;
+
+    if ( !(dev.isIntel() && (type == CV_8UC1) &&
+         (_src.offset() == 0) && (_src.step() % 4 == 0) &&
+         (_src.cols() % 16 == 0) && (_src.rows() % 2 == 0) &&
+         (anchor.x == 1) && (anchor.y == 1) &&
+         (ksize.width == 3) && (ksize.height == 3)) )
+        return false;
+
+    float alpha = 1.0f / (ksize.height * ksize.width);
+    Size size = _src.size();
+    size_t globalsize[2] = { 0, 0 };
+    size_t localsize[2] = { 0, 0 };
+    const char * const borderMap[] = { "BORDER_CONSTANT", "BORDER_REPLICATE", "BORDER_REFLECT", 0, "BORDER_REFLECT_101" };
+
+    globalsize[0] = size.width / 16;
+    globalsize[1] = size.height / 2;
+
+    char build_opts[1024];
+    sprintf(build_opts, "-D %s %s", borderMap[borderType], normalize ? "-D NORMALIZE" : "");
+
+    ocl::Kernel kernel("boxFilter3x3_8UC1_cols16_rows2", cv::ocl::imgproc::boxFilter3x3_oclsrc, build_opts);
+    if (kernel.empty())
+        return false;
+
+    UMat src = _src.getUMat();
+    _dst.create(size, CV_MAKETYPE(ddepth, cn));
+    if (!(_dst.offset() == 0 && _dst.step() % 4 == 0))
+        return false;
+    UMat dst = _dst.getUMat();
+
+    int idxArg = kernel.set(0, ocl::KernelArg::PtrReadOnly(src));
+    idxArg = kernel.set(idxArg, (int)src.step);
+    idxArg = kernel.set(idxArg, ocl::KernelArg::PtrWriteOnly(dst));
+    idxArg = kernel.set(idxArg, (int)dst.step);
+    idxArg = kernel.set(idxArg, (int)dst.rows);
+    idxArg = kernel.set(idxArg, (int)dst.cols);
+    if (normalize)
+        idxArg = kernel.set(idxArg, (float)alpha);
+
+    return kernel.run(2, globalsize, (localsize[0] == 0) ? NULL : localsize, false);
 }
+
+#define DIVUP(total, grain) ((total + grain - 1) / (grain))
+#define ROUNDUP(sz, n)      ((sz) + (n) - 1 - (((sz) + (n) - 1) % (n)))
+
+static bool ocl_boxFilter( InputArray _src, OutputArray _dst, int ddepth,
+                           Size ksize, Point anchor, int borderType, bool normalize, bool sqr = false )
+{
+    const ocl::Device & dev = ocl::Device::getDefault();
+    int type = _src.type(), sdepth = CV_MAT_DEPTH(type), cn = CV_MAT_CN(type), esz = CV_ELEM_SIZE(type);
+    bool doubleSupport = dev.doubleFPConfig() > 0;
+
+    if (ddepth < 0)
+        ddepth = sdepth;
+
+    if (cn > 4 || (!doubleSupport && (sdepth == CV_64F || ddepth == CV_64F)) ||
+        _src.offset() % esz != 0 || _src.step() % esz != 0)
+        return false;
+
+    if (anchor.x < 0)
+        anchor.x = ksize.width / 2;
+    if (anchor.y < 0)
+        anchor.y = ksize.height / 2;
+
+    int computeUnits = ocl::Device::getDefault().maxComputeUnits();
+    float alpha = 1.0f / (ksize.height * ksize.width);
+    Size size = _src.size(), wholeSize;
+    bool isolated = (borderType & BORDER_ISOLATED) != 0;
+    borderType &= ~BORDER_ISOLATED;
+    int wdepth = std::max(CV_32F, std::max(ddepth, sdepth)),
+        wtype = CV_MAKE_TYPE(wdepth, cn), dtype = CV_MAKE_TYPE(ddepth, cn);
+
+    const char * const borderMap[] = { "BORDER_CONSTANT", "BORDER_REPLICATE", "BORDER_REFLECT", 0, "BORDER_REFLECT_101" };
+    size_t globalsize[2] = { (size_t)size.width, (size_t)size.height };
+    size_t localsize_general[2] = { 0, 1 }, * localsize = NULL;
+
+    UMat src = _src.getUMat();
+    if (!isolated)
+    {
+        Point ofs;
+        src.locateROI(wholeSize, ofs);
+    }
+
+    int h = isolated ? size.height : wholeSize.height;
+    int w = isolated ? size.width : wholeSize.width;
+
+    size_t maxWorkItemSizes[32];
+    ocl::Device::getDefault().maxWorkItemSizes(maxWorkItemSizes);
+    int tryWorkItems = (int)maxWorkItemSizes[0];
+
+    ocl::Kernel kernel;
+
+    if (dev.isIntel() && !(dev.type() & ocl::Device::TYPE_CPU) &&
+        ((ksize.width < 5 && ksize.height < 5 && esz <= 4) ||
+         (ksize.width == 5 && ksize.height == 5 && cn == 1)))
+    {
+        if (w < ksize.width || h < ksize.height)
+            return false;
+
+        // Figure out what vector size to use for loading the pixels.
+        int pxLoadNumPixels = cn != 1 || size.width % 4 ? 1 : 4;
+        int pxLoadVecSize = cn * pxLoadNumPixels;
+
+        // Figure out how many pixels per work item to compute in X and Y
+        // directions.  Too many and we run out of registers.
+        int pxPerWorkItemX = 1, pxPerWorkItemY = 1;
+        if (cn <= 2 && ksize.width <= 4 && ksize.height <= 4)
+        {
+            pxPerWorkItemX = size.width % 8 ? size.width % 4 ? size.width % 2 ? 1 : 2 : 4 : 8;
+            pxPerWorkItemY = size.height % 2 ? 1 : 2;
+        }
+        else if (cn < 4 || (ksize.width <= 4 && ksize.height <= 4))
+        {
+            pxPerWorkItemX = size.width % 2 ? 1 : 2;
+            pxPerWorkItemY = size.height % 2 ? 1 : 2;
+        }
+        globalsize[0] = size.width / pxPerWorkItemX;
+        globalsize[1] = size.height / pxPerWorkItemY;
+
+        // Need some padding in the private array for pixels
+        int privDataWidth = ROUNDUP(pxPerWorkItemX + ksize.width - 1, pxLoadNumPixels);
+
+        // Make the global size a nice round number so the runtime can pick
+        // from reasonable choices for the workgroup size
+        const int wgRound = 256;
+        globalsize[0] = ROUNDUP(globalsize[0], wgRound);
+
+        char build_options[1024], cvt[2][40];
+        sprintf(build_options, "-D cn=%d "
+                "-D ANCHOR_X=%d -D ANCHOR_Y=%d -D KERNEL_SIZE_X=%d -D KERNEL_SIZE_Y=%d "
+                "-D PX_LOAD_VEC_SIZE=%d -D PX_LOAD_NUM_PX=%d "
+                "-D PX_PER_WI_X=%d -D PX_PER_WI_Y=%d -D PRIV_DATA_WIDTH=%d -D %s -D %s "
+                "-D PX_LOAD_X_ITERATIONS=%d -D PX_LOAD_Y_ITERATIONS=%d "
+                "-D srcT=%s -D srcT1=%s -D dstT=%s -D dstT1=%s -D WT=%s -D WT1=%s "
+                "-D convertToWT=%s -D convertToDstT=%s%s%s -D PX_LOAD_FLOAT_VEC_CONV=convert_%s -D OP_BOX_FILTER",
+                cn, anchor.x, anchor.y, ksize.width, ksize.height,
+                pxLoadVecSize, pxLoadNumPixels,
+                pxPerWorkItemX, pxPerWorkItemY, privDataWidth, borderMap[borderType],
+                isolated ? "BORDER_ISOLATED" : "NO_BORDER_ISOLATED",
+                privDataWidth / pxLoadNumPixels, pxPerWorkItemY + ksize.height - 1,
+                ocl::typeToStr(type), ocl::typeToStr(sdepth), ocl::typeToStr(dtype),
+                ocl::typeToStr(ddepth), ocl::typeToStr(wtype), ocl::typeToStr(wdepth),
+                ocl::convertTypeStr(sdepth, wdepth, cn, cvt[0]),
+                ocl::convertTypeStr(wdepth, ddepth, cn, cvt[1]),
+                normalize ? " -D NORMALIZE" : "", sqr ? " -D SQR" : "",
+                ocl::typeToStr(CV_MAKE_TYPE(wdepth, pxLoadVecSize)) //PX_LOAD_FLOAT_VEC_CONV
+                );
+
+
+        if (!kernel.create("filterSmall", cv::ocl::imgproc::filterSmall_oclsrc, build_options))
+            return false;
+    }
+    else
+    {
+        localsize = localsize_general;
+        for ( ; ; )
+        {
+            int BLOCK_SIZE_X = tryWorkItems, BLOCK_SIZE_Y = std::min(ksize.height * 10, size.height);
+
+            while (BLOCK_SIZE_X > 32 && BLOCK_SIZE_X >= ksize.width * 2 && BLOCK_SIZE_X > size.width * 2)
+                BLOCK_SIZE_X /= 2;
+            while (BLOCK_SIZE_Y < BLOCK_SIZE_X / 8 && BLOCK_SIZE_Y * computeUnits * 32 < size.height)
+                BLOCK_SIZE_Y *= 2;
+
+            if (ksize.width > BLOCK_SIZE_X || w < ksize.width || h < ksize.height)
+                return false;
+
+            char cvt[2][50];
+            String opts = format("-D LOCAL_SIZE_X=%d -D BLOCK_SIZE_Y=%d -D ST=%s -D DT=%s -D WT=%s -D convertToDT=%s -D convertToWT=%s"
+                                 " -D ANCHOR_X=%d -D ANCHOR_Y=%d -D KERNEL_SIZE_X=%d -D KERNEL_SIZE_Y=%d -D %s%s%s%s%s"
+                                 " -D ST1=%s -D DT1=%s -D cn=%d",
+                                 BLOCK_SIZE_X, BLOCK_SIZE_Y, ocl::typeToStr(type), ocl::typeToStr(CV_MAKE_TYPE(ddepth, cn)),
+                                 ocl::typeToStr(CV_MAKE_TYPE(wdepth, cn)),
+                                 ocl::convertTypeStr(wdepth, ddepth, cn, cvt[0]),
+                                 ocl::convertTypeStr(sdepth, wdepth, cn, cvt[1]),
+                                 anchor.x, anchor.y, ksize.width, ksize.height, borderMap[borderType],
+                                 isolated ? " -D BORDER_ISOLATED" : "", doubleSupport ? " -D DOUBLE_SUPPORT" : "",
+                                 normalize ? " -D NORMALIZE" : "", sqr ? " -D SQR" : "",
+                                 ocl::typeToStr(sdepth), ocl::typeToStr(ddepth), cn);
+
+            localsize[0] = BLOCK_SIZE_X;
+            globalsize[0] = DIVUP(size.width, BLOCK_SIZE_X - (ksize.width - 1)) * BLOCK_SIZE_X;
+            globalsize[1] = DIVUP(size.height, BLOCK_SIZE_Y);
+
+            kernel.create("boxFilter", cv::ocl::imgproc::boxFilter_oclsrc, opts);
+            if (kernel.empty())
+                return false;
+
+            size_t kernelWorkGroupSize = kernel.workGroupSize();
+            if (localsize[0] <= kernelWorkGroupSize)
+                break;
+            if (BLOCK_SIZE_X < (int)kernelWorkGroupSize)
+                return false;
+
+            tryWorkItems = (int)kernelWorkGroupSize;
+        }
+    }
+
+    _dst.create(size, CV_MAKETYPE(ddepth, cn));
+    UMat dst = _dst.getUMat();
+
+    int idxArg = kernel.set(0, ocl::KernelArg::PtrReadOnly(src));
+    idxArg = kernel.set(idxArg, (int)src.step);
+    int srcOffsetX = (int)((src.offset % src.step) / src.elemSize());
+    int srcOffsetY = (int)(src.offset / src.step);
+    int srcEndX = isolated ? srcOffsetX + size.width : wholeSize.width;
+    int srcEndY = isolated ? srcOffsetY + size.height : wholeSize.height;
+    idxArg = kernel.set(idxArg, srcOffsetX);
+    idxArg = kernel.set(idxArg, srcOffsetY);
+    idxArg = kernel.set(idxArg, srcEndX);
+    idxArg = kernel.set(idxArg, srcEndY);
+    idxArg = kernel.set(idxArg, ocl::KernelArg::WriteOnly(dst));
+    if (normalize)
+        idxArg = kernel.set(idxArg, (float)alpha);
+
+    return kernel.run(2, globalsize, localsize, false);
+}
+
+#undef ROUNDUP
+
+#endif
+
+}
+
 
 cv::Ptr<cv::BaseRowFilter> cv::getRowSumFilter(int srcType, int sumType, int ksize, int anchor)
 {
@@ -622,29 +1544,31 @@ cv::Ptr<cv::BaseRowFilter> cv::getRowSumFilter(int srcType, int sumType, int ksi
         anchor = ksize/2;
 
     if( sdepth == CV_8U && ddepth == CV_32S )
-        return Ptr<BaseRowFilter>(new RowSum<uchar, int>(ksize, anchor));
+        return makePtr<RowSum<uchar, int> >(ksize, anchor);
+    if( sdepth == CV_8U && ddepth == CV_16U )
+        return makePtr<RowSum<uchar, ushort> >(ksize, anchor);
     if( sdepth == CV_8U && ddepth == CV_64F )
-        return Ptr<BaseRowFilter>(new RowSum<uchar, double>(ksize, anchor));
+        return makePtr<RowSum<uchar, double> >(ksize, anchor);
     if( sdepth == CV_16U && ddepth == CV_32S )
-        return Ptr<BaseRowFilter>(new RowSum<ushort, int>(ksize, anchor));
+        return makePtr<RowSum<ushort, int> >(ksize, anchor);
     if( sdepth == CV_16U && ddepth == CV_64F )
-        return Ptr<BaseRowFilter>(new RowSum<ushort, double>(ksize, anchor));
+        return makePtr<RowSum<ushort, double> >(ksize, anchor);
     if( sdepth == CV_16S && ddepth == CV_32S )
-        return Ptr<BaseRowFilter>(new RowSum<short, int>(ksize, anchor));
+        return makePtr<RowSum<short, int> >(ksize, anchor);
     if( sdepth == CV_32S && ddepth == CV_32S )
-        return Ptr<BaseRowFilter>(new RowSum<int, int>(ksize, anchor));
+        return makePtr<RowSum<int, int> >(ksize, anchor);
     if( sdepth == CV_16S && ddepth == CV_64F )
-        return Ptr<BaseRowFilter>(new RowSum<short, double>(ksize, anchor));
+        return makePtr<RowSum<short, double> >(ksize, anchor);
     if( sdepth == CV_32F && ddepth == CV_64F )
-        return Ptr<BaseRowFilter>(new RowSum<float, double>(ksize, anchor));
+        return makePtr<RowSum<float, double> >(ksize, anchor);
     if( sdepth == CV_64F && ddepth == CV_64F )
-        return Ptr<BaseRowFilter>(new RowSum<double, double>(ksize, anchor));
+        return makePtr<RowSum<double, double> >(ksize, anchor);
 
     CV_Error_( CV_StsNotImplemented,
         ("Unsupported combination of source format (=%d), and buffer format (=%d)",
         srcType, sumType));
 
-    return Ptr<BaseRowFilter>(0);
+    return Ptr<BaseRowFilter>();
 }
 
 
@@ -658,33 +1582,35 @@ cv::Ptr<cv::BaseColumnFilter> cv::getColumnSumFilter(int sumType, int dstType, i
         anchor = ksize/2;
 
     if( ddepth == CV_8U && sdepth == CV_32S )
-        return Ptr<BaseColumnFilter>(new ColumnSum<int, uchar>(ksize, anchor, scale));
+        return makePtr<ColumnSum<int, uchar> >(ksize, anchor, scale);
+    if( ddepth == CV_8U && sdepth == CV_16U )
+        return makePtr<ColumnSum<ushort, uchar> >(ksize, anchor, scale);
     if( ddepth == CV_8U && sdepth == CV_64F )
-        return Ptr<BaseColumnFilter>(new ColumnSum<double, uchar>(ksize, anchor, scale));
+        return makePtr<ColumnSum<double, uchar> >(ksize, anchor, scale);
     if( ddepth == CV_16U && sdepth == CV_32S )
-        return Ptr<BaseColumnFilter>(new ColumnSum<int, ushort>(ksize, anchor, scale));
+        return makePtr<ColumnSum<int, ushort> >(ksize, anchor, scale);
     if( ddepth == CV_16U && sdepth == CV_64F )
-        return Ptr<BaseColumnFilter>(new ColumnSum<double, ushort>(ksize, anchor, scale));
+        return makePtr<ColumnSum<double, ushort> >(ksize, anchor, scale);
     if( ddepth == CV_16S && sdepth == CV_32S )
-        return Ptr<BaseColumnFilter>(new ColumnSum<int, short>(ksize, anchor, scale));
+        return makePtr<ColumnSum<int, short> >(ksize, anchor, scale);
     if( ddepth == CV_16S && sdepth == CV_64F )
-        return Ptr<BaseColumnFilter>(new ColumnSum<double, short>(ksize, anchor, scale));
+        return makePtr<ColumnSum<double, short> >(ksize, anchor, scale);
     if( ddepth == CV_32S && sdepth == CV_32S )
-        return Ptr<BaseColumnFilter>(new ColumnSum<int, int>(ksize, anchor, scale));
+        return makePtr<ColumnSum<int, int> >(ksize, anchor, scale);
     if( ddepth == CV_32F && sdepth == CV_32S )
-        return Ptr<BaseColumnFilter>(new ColumnSum<int, float>(ksize, anchor, scale));
+        return makePtr<ColumnSum<int, float> >(ksize, anchor, scale);
     if( ddepth == CV_32F && sdepth == CV_64F )
-        return Ptr<BaseColumnFilter>(new ColumnSum<double, float>(ksize, anchor, scale));
+        return makePtr<ColumnSum<double, float> >(ksize, anchor, scale);
     if( ddepth == CV_64F && sdepth == CV_32S )
-        return Ptr<BaseColumnFilter>(new ColumnSum<int, double>(ksize, anchor, scale));
+        return makePtr<ColumnSum<int, double> >(ksize, anchor, scale);
     if( ddepth == CV_64F && sdepth == CV_64F )
-        return Ptr<BaseColumnFilter>(new ColumnSum<double, double>(ksize, anchor, scale));
+        return makePtr<ColumnSum<double, double> >(ksize, anchor, scale);
 
     CV_Error_( CV_StsNotImplemented,
         ("Unsupported combination of sum format (=%d), and destination format (=%d)",
         sumType, dstType));
 
-    return Ptr<BaseColumnFilter>(0);
+    return Ptr<BaseColumnFilter>();
 }
 
 
@@ -693,7 +1619,10 @@ cv::Ptr<cv::FilterEngine> cv::createBoxFilter( int srcType, int dstType, Size ks
 {
     int sdepth = CV_MAT_DEPTH(srcType);
     int cn = CV_MAT_CN(srcType), sumType = CV_64F;
-    if( sdepth <= CV_32S && (!normalize ||
+    if( sdepth == CV_8U && CV_MAT_DEPTH(dstType) == CV_8U &&
+        ksize.width*ksize.height <= 256 )
+        sumType = CV_16U;
+    else if( sdepth <= CV_32S && (!normalize ||
         ksize.width*ksize.height <= (sdepth == CV_8U ? (1<<23) :
             sdepth == CV_16U ? (1 << 15) : (1 << 16))) )
         sumType = CV_32S;
@@ -703,17 +1632,224 @@ cv::Ptr<cv::FilterEngine> cv::createBoxFilter( int srcType, int dstType, Size ks
     Ptr<BaseColumnFilter> columnFilter = getColumnSumFilter(sumType,
         dstType, ksize.height, anchor.y, normalize ? 1./(ksize.width*ksize.height) : 1);
 
-    return Ptr<FilterEngine>(new FilterEngine(Ptr<BaseFilter>(0), rowFilter, columnFilter,
-           srcType, dstType, sumType, borderType ));
+    return makePtr<FilterEngine>(Ptr<BaseFilter>(), rowFilter, columnFilter,
+           srcType, dstType, sumType, borderType );
 }
+
+#ifdef HAVE_OPENVX
+namespace cv
+{
+    static bool openvx_boxfilter(InputArray _src, OutputArray _dst, int ddepth,
+                                 Size ksize, Point anchor,
+                                 bool normalize, int borderType)
+    {
+        int stype = _src.type();
+        if (ddepth < 0)
+            ddepth = CV_8UC1;
+        if (stype != CV_8UC1 || (ddepth != CV_8U && ddepth != CV_16S) ||
+            (anchor.x >= 0 && anchor.x != ksize.width / 2) ||
+            (anchor.y >= 0 && anchor.y != ksize.height / 2) ||
+            ksize.width % 2 != 1 || ksize.height % 2 != 1 ||
+            ksize.width < 3 || ksize.height < 3)
+            return false;
+
+        Mat src = _src.getMat();
+        _dst.create(src.size(), CV_MAKETYPE(ddepth, 1));
+        Mat dst = _dst.getMat();
+
+        if (src.cols < ksize.width || src.rows < ksize.height)
+            return false;
+
+        if ((borderType & BORDER_ISOLATED) == 0 && src.isSubmatrix())
+            return false; //Process isolated borders only
+        vx_enum border;
+        switch (borderType & ~BORDER_ISOLATED)
+        {
+        case BORDER_CONSTANT:
+            border = VX_BORDER_CONSTANT;
+            break;
+        case BORDER_REPLICATE:
+            border = VX_BORDER_REPLICATE;
+            break;
+        default:
+            return false;
+        }
+
+        try
+        {
+            ivx::Context ctx = ovx::getOpenVXContext();
+            if ((vx_size)(ksize.width) > ctx.convolutionMaxDimension() || (vx_size)(ksize.height) > ctx.convolutionMaxDimension())
+                return false;
+
+            Mat a;
+            if (dst.data != src.data)
+                a = src;
+            else
+                src.copyTo(a);
+
+            ivx::Image
+                ia = ivx::Image::createFromHandle(ctx, VX_DF_IMAGE_U8,
+                                                  ivx::Image::createAddressing(a.cols, a.rows, 1, (vx_int32)(a.step)), a.data),
+                ib = ivx::Image::createFromHandle(ctx, ddepth == CV_16S ? VX_DF_IMAGE_S16 : VX_DF_IMAGE_U8,
+                                                  ivx::Image::createAddressing(dst.cols, dst.rows, ddepth == CV_16S ? 2 : 1, (vx_int32)(dst.step)), dst.data);
+
+            //ATTENTION: VX_CONTEXT_IMMEDIATE_BORDER attribute change could lead to strange issues in multi-threaded environments
+            //since OpenVX standart says nothing about thread-safety for now
+            ivx::border_t prevBorder = ctx.immediateBorder();
+            ctx.setImmediateBorder(border, (vx_uint8)(0));
+            if (ddepth == CV_8U && ksize.width == 3 && ksize.height == 3 && normalize)
+            {
+                ivx::IVX_CHECK_STATUS(vxuBox3x3(ctx, ia, ib));
+            }
+            else
+            {
+#if VX_VERSION <= VX_VERSION_1_0
+                if (ctx.vendorID() == VX_ID_KHRONOS && ((vx_size)(src.cols) <= ctx.convolutionMaxDimension() || (vx_size)(src.rows) <= ctx.convolutionMaxDimension()))
+                {
+                    ctx.setImmediateBorder(prevBorder);
+                    return false;
+                }
+#endif
+                Mat convData(ksize, CV_16SC1);
+                convData = normalize ? (1 << 15) / (ksize.width * ksize.height) : 1;
+                ivx::Convolution cnv = ivx::Convolution::create(ctx, convData.cols, convData.rows);
+                cnv.copyFrom(convData);
+                if (normalize)
+                    cnv.setScale(1 << 15);
+                ivx::IVX_CHECK_STATUS(vxuConvolve(ctx, ia, cnv, ib));
+            }
+            ctx.setImmediateBorder(prevBorder);
+        }
+        catch (ivx::RuntimeError & e)
+        {
+            VX_DbgThrow(e.what());
+        }
+        catch (ivx::WrapperError & e)
+        {
+            VX_DbgThrow(e.what());
+        }
+
+        return true;
+    }
+}
+#endif
+
+// TODO: IPP performance regression
+#if defined(HAVE_IPP) && IPP_DISABLE_BLOCK
+namespace cv
+{
+static bool ipp_boxfilter( InputArray _src, OutputArray _dst, int ddepth,
+                Size ksize, Point anchor,
+                bool normalize, int borderType )
+{
+    CV_INSTRUMENT_REGION_IPP()
+
+    int stype = _src.type(), sdepth = CV_MAT_DEPTH(stype), cn = CV_MAT_CN(stype);
+    if( ddepth < 0 )
+        ddepth = sdepth;
+    int ippBorderType = borderType & ~BORDER_ISOLATED;
+    Point ocvAnchor, ippAnchor;
+    ocvAnchor.x = anchor.x < 0 ? ksize.width / 2 : anchor.x;
+    ocvAnchor.y = anchor.y < 0 ? ksize.height / 2 : anchor.y;
+    ippAnchor.x = ksize.width / 2 - (ksize.width % 2 == 0 ? 1 : 0);
+    ippAnchor.y = ksize.height / 2 - (ksize.height % 2 == 0 ? 1 : 0);
+
+    Mat src = _src.getMat();
+    _dst.create( src.size(), CV_MAKETYPE(ddepth, cn) );
+    Mat dst = _dst.getMat();
+    if( borderType != BORDER_CONSTANT && normalize && (borderType & BORDER_ISOLATED) != 0 )
+    {
+        if( src.rows == 1 )
+            ksize.height = 1;
+        if( src.cols == 1 )
+            ksize.width = 1;
+    }
+
+    {
+        if (normalize && !src.isSubmatrix() && ddepth == sdepth &&
+            (/*ippBorderType == BORDER_REPLICATE ||*/ /* returns ippStsStepErr: Step value is not valid */
+             ippBorderType == BORDER_CONSTANT) && ocvAnchor == ippAnchor &&
+             dst.cols != ksize.width && dst.rows != ksize.height) // returns ippStsMaskSizeErr: mask has an illegal value
+        {
+            Ipp32s bufSize = 0;
+            IppiSize roiSize = { dst.cols, dst.rows }, maskSize = { ksize.width, ksize.height };
+
+#define IPP_FILTER_BOX_BORDER(ippType, ippDataType, flavor) \
+            do \
+            { \
+                if (ippiFilterBoxBorderGetBufferSize(roiSize, maskSize, ippDataType, cn, &bufSize) >= 0) \
+                { \
+                    Ipp8u * buffer = ippsMalloc_8u(bufSize); \
+                    ippType borderValue[4] = { 0, 0, 0, 0 }; \
+                    ippBorderType = ippBorderType == BORDER_CONSTANT ? ippBorderConst : ippBorderRepl; \
+                    IppStatus status = CV_INSTRUMENT_FUN_IPP(ippiFilterBoxBorder_##flavor, src.ptr<ippType>(), (int)src.step, dst.ptr<ippType>(), \
+                                                                    (int)dst.step, roiSize, maskSize, \
+                                                                    (IppiBorderType)ippBorderType, borderValue, buffer); \
+                    ippsFree(buffer); \
+                    if (status >= 0) \
+                    { \
+                        CV_IMPL_ADD(CV_IMPL_IPP); \
+                        return true; \
+                    } \
+                } \
+            } while ((void)0, 0)
+
+            if (stype == CV_8UC1)
+                IPP_FILTER_BOX_BORDER(Ipp8u, ipp8u, 8u_C1R);
+            else if (stype == CV_8UC3)
+                IPP_FILTER_BOX_BORDER(Ipp8u, ipp8u, 8u_C3R);
+            else if (stype == CV_8UC4)
+                IPP_FILTER_BOX_BORDER(Ipp8u, ipp8u, 8u_C4R);
+
+            // Oct 2014: performance with BORDER_CONSTANT
+            //else if (stype == CV_16UC1)
+            //    IPP_FILTER_BOX_BORDER(Ipp16u, ipp16u, 16u_C1R);
+            else if (stype == CV_16UC3)
+                IPP_FILTER_BOX_BORDER(Ipp16u, ipp16u, 16u_C3R);
+            else if (stype == CV_16UC4)
+                IPP_FILTER_BOX_BORDER(Ipp16u, ipp16u, 16u_C4R);
+
+            // Oct 2014: performance with BORDER_CONSTANT
+            //else if (stype == CV_16SC1)
+            //    IPP_FILTER_BOX_BORDER(Ipp16s, ipp16s, 16s_C1R);
+            else if (stype == CV_16SC3)
+                IPP_FILTER_BOX_BORDER(Ipp16s, ipp16s, 16s_C3R);
+            else if (stype == CV_16SC4)
+                IPP_FILTER_BOX_BORDER(Ipp16s, ipp16s, 16s_C4R);
+
+            else if (stype == CV_32FC1)
+                IPP_FILTER_BOX_BORDER(Ipp32f, ipp32f, 32f_C1R);
+            else if (stype == CV_32FC3)
+                IPP_FILTER_BOX_BORDER(Ipp32f, ipp32f, 32f_C3R);
+            else if (stype == CV_32FC4)
+                IPP_FILTER_BOX_BORDER(Ipp32f, ipp32f, 32f_C4R);
+        }
+#undef IPP_FILTER_BOX_BORDER
+    }
+    return false;
+}
+}
+#endif
 
 
 void cv::boxFilter( InputArray _src, OutputArray _dst, int ddepth,
                 Size ksize, Point anchor,
                 bool normalize, int borderType )
 {
+    CV_INSTRUMENT_REGION()
+
+    CV_OCL_RUN(_dst.isUMat() &&
+               (borderType == BORDER_REPLICATE || borderType == BORDER_CONSTANT ||
+                borderType == BORDER_REFLECT || borderType == BORDER_REFLECT_101),
+               ocl_boxFilter3x3_8UC1(_src, _dst, ddepth, ksize, anchor, borderType, normalize))
+
+    CV_OCL_RUN(_dst.isUMat(), ocl_boxFilter(_src, _dst, ddepth, ksize, anchor, borderType, normalize))
+
+    CV_OVX_RUN(true,
+               openvx_boxfilter(_src, _dst, ddepth, ksize, anchor, normalize, borderType))
+
     Mat src = _src.getMat();
-    int sdepth = src.depth(), cn = src.channels();
+    int stype = src.type(), sdepth = CV_MAT_DEPTH(stype), cn = CV_MAT_CN(stype);
     if( ddepth < 0 )
         ddepth = sdepth;
     _dst.create( src.size(), CV_MAKETYPE(ddepth, cn) );
@@ -726,20 +1862,166 @@ void cv::boxFilter( InputArray _src, OutputArray _dst, int ddepth,
             ksize.width = 1;
     }
 #ifdef HAVE_TEGRA_OPTIMIZATION
-    if ( tegra::box(src, dst, ksize, anchor, normalize, borderType) )
+    if ( tegra::useTegra() && tegra::box(src, dst, ksize, anchor, normalize, borderType) )
         return;
 #endif
 
+#if defined HAVE_IPP && IPP_DISABLE_BLOCK
+    int ippBorderType = borderType & ~BORDER_ISOLATED;
+    Point ocvAnchor, ippAnchor;
+    ocvAnchor.x = anchor.x < 0 ? ksize.width / 2 : anchor.x;
+    ocvAnchor.y = anchor.y < 0 ? ksize.height / 2 : anchor.y;
+    ippAnchor.x = ksize.width / 2 - (ksize.width % 2 == 0 ? 1 : 0);
+    ippAnchor.y = ksize.height / 2 - (ksize.height % 2 == 0 ? 1 : 0);
+    CV_IPP_RUN((normalize && !_src.isSubmatrix() && ddepth == sdepth &&
+            (/*ippBorderType == BORDER_REPLICATE ||*/ /* returns ippStsStepErr: Step value is not valid */
+             ippBorderType == BORDER_CONSTANT) && ocvAnchor == ippAnchor &&
+             _dst.cols() != ksize.width && _dst.rows() != ksize.height),
+             ipp_boxfilter( _src,  _dst,  ddepth, ksize,  anchor, normalize,  borderType));
+#endif
+
+    Point ofs;
+    Size wsz(src.cols, src.rows);
+    if(!(borderType&BORDER_ISOLATED))
+        src.locateROI( wsz, ofs );
+    borderType = (borderType&~BORDER_ISOLATED);
+
     Ptr<FilterEngine> f = createBoxFilter( src.type(), dst.type(),
                         ksize, anchor, normalize, borderType );
-    f->apply( src, dst );
+
+    f->apply( src, dst, wsz, ofs );
 }
+
 
 void cv::blur( InputArray src, OutputArray dst,
            Size ksize, Point anchor, int borderType )
 {
+    CV_INSTRUMENT_REGION()
+
     boxFilter( src, dst, -1, ksize, anchor, true, borderType );
 }
+
+
+/****************************************************************************************\
+                                    Squared Box Filter
+\****************************************************************************************/
+
+namespace cv
+{
+
+template<typename T, typename ST>
+struct SqrRowSum :
+        public BaseRowFilter
+{
+    SqrRowSum( int _ksize, int _anchor ) :
+        BaseRowFilter()
+    {
+        ksize = _ksize;
+        anchor = _anchor;
+    }
+
+    virtual void operator()(const uchar* src, uchar* dst, int width, int cn)
+    {
+        const T* S = (const T*)src;
+        ST* D = (ST*)dst;
+        int i = 0, k, ksz_cn = ksize*cn;
+
+        width = (width - 1)*cn;
+        for( k = 0; k < cn; k++, S++, D++ )
+        {
+            ST s = 0;
+            for( i = 0; i < ksz_cn; i += cn )
+            {
+                ST val = (ST)S[i];
+                s += val*val;
+            }
+            D[0] = s;
+            for( i = 0; i < width; i += cn )
+            {
+                ST val0 = (ST)S[i], val1 = (ST)S[i + ksz_cn];
+                s += val1*val1 - val0*val0;
+                D[i+cn] = s;
+            }
+        }
+    }
+};
+
+static Ptr<BaseRowFilter> getSqrRowSumFilter(int srcType, int sumType, int ksize, int anchor)
+{
+    int sdepth = CV_MAT_DEPTH(srcType), ddepth = CV_MAT_DEPTH(sumType);
+    CV_Assert( CV_MAT_CN(sumType) == CV_MAT_CN(srcType) );
+
+    if( anchor < 0 )
+        anchor = ksize/2;
+
+    if( sdepth == CV_8U && ddepth == CV_32S )
+        return makePtr<SqrRowSum<uchar, int> >(ksize, anchor);
+    if( sdepth == CV_8U && ddepth == CV_64F )
+        return makePtr<SqrRowSum<uchar, double> >(ksize, anchor);
+    if( sdepth == CV_16U && ddepth == CV_64F )
+        return makePtr<SqrRowSum<ushort, double> >(ksize, anchor);
+    if( sdepth == CV_16S && ddepth == CV_64F )
+        return makePtr<SqrRowSum<short, double> >(ksize, anchor);
+    if( sdepth == CV_32F && ddepth == CV_64F )
+        return makePtr<SqrRowSum<float, double> >(ksize, anchor);
+    if( sdepth == CV_64F && ddepth == CV_64F )
+        return makePtr<SqrRowSum<double, double> >(ksize, anchor);
+
+    CV_Error_( CV_StsNotImplemented,
+              ("Unsupported combination of source format (=%d), and buffer format (=%d)",
+               srcType, sumType));
+
+    return Ptr<BaseRowFilter>();
+}
+
+}
+
+void cv::sqrBoxFilter( InputArray _src, OutputArray _dst, int ddepth,
+                       Size ksize, Point anchor,
+                       bool normalize, int borderType )
+{
+    CV_INSTRUMENT_REGION()
+
+    int srcType = _src.type(), sdepth = CV_MAT_DEPTH(srcType), cn = CV_MAT_CN(srcType);
+    Size size = _src.size();
+
+    if( ddepth < 0 )
+        ddepth = sdepth < CV_32F ? CV_32F : CV_64F;
+
+    if( borderType != BORDER_CONSTANT && normalize )
+    {
+        if( size.height == 1 )
+            ksize.height = 1;
+        if( size.width == 1 )
+            ksize.width = 1;
+    }
+
+    CV_OCL_RUN(_dst.isUMat() && _src.dims() <= 2,
+               ocl_boxFilter(_src, _dst, ddepth, ksize, anchor, borderType, normalize, true))
+
+    int sumDepth = CV_64F;
+    if( sdepth == CV_8U )
+        sumDepth = CV_32S;
+    int sumType = CV_MAKETYPE( sumDepth, cn ), dstType = CV_MAKETYPE(ddepth, cn);
+
+    Mat src = _src.getMat();
+    _dst.create( size, dstType );
+    Mat dst = _dst.getMat();
+
+    Ptr<BaseRowFilter> rowFilter = getSqrRowSumFilter(srcType, sumType, ksize.width, anchor.x );
+    Ptr<BaseColumnFilter> columnFilter = getColumnSumFilter(sumType,
+                                                            dstType, ksize.height, anchor.y,
+                                                            normalize ? 1./(ksize.width*ksize.height) : 1);
+
+    Ptr<FilterEngine> f = makePtr<FilterEngine>(Ptr<BaseFilter>(), rowFilter, columnFilter,
+                                                srcType, dstType, sumType, borderType );
+    Point ofs;
+    Size wsz(src.cols, src.rows);
+    src.locateROI( wsz, ofs );
+
+    f->apply( src, dst, wsz, ofs );
+}
+
 
 /****************************************************************************************\
                                      Gaussian Blur
@@ -761,8 +2043,8 @@ cv::Mat cv::getGaussianKernel( int n, double sigma, int ktype )
 
     CV_Assert( ktype == CV_32F || ktype == CV_64F );
     Mat kernel(n, 1, ktype);
-    float* cf = (float*)kernel.data;
-    double* cd = (double*)kernel.data;
+    float* cf = kernel.ptr<float>();
+    double* cd = kernel.ptr<double>();
 
     double sigmaX = sigma > 0 ? sigma : ((n-1)*0.5 - 1)*0.3 + 0.8;
     double scale2X = -0.5/(sigmaX*sigmaX);
@@ -797,10 +2079,10 @@ cv::Mat cv::getGaussianKernel( int n, double sigma, int ktype )
     return kernel;
 }
 
+namespace cv {
 
-cv::Ptr<cv::FilterEngine> cv::createGaussianFilter( int type, Size ksize,
-                                        double sigma1, double sigma2,
-                                        int borderType )
+static void createGaussianKernels( Mat & kx, Mat & ky, int type, Size ksize,
+                                   double sigma1, double sigma2 )
 {
     int depth = CV_MAT_DEPTH(type);
     if( sigma2 <= 0 )
@@ -818,64 +2100,297 @@ cv::Ptr<cv::FilterEngine> cv::createGaussianFilter( int type, Size ksize,
     sigma1 = std::max( sigma1, 0. );
     sigma2 = std::max( sigma2, 0. );
 
-    Mat kx = getGaussianKernel( ksize.width, sigma1, std::max(depth, CV_32F) );
-    Mat ky;
+    kx = getGaussianKernel( ksize.width, sigma1, std::max(depth, CV_32F) );
     if( ksize.height == ksize.width && std::abs(sigma1 - sigma2) < DBL_EPSILON )
         ky = kx;
     else
         ky = getGaussianKernel( ksize.height, sigma2, std::max(depth, CV_32F) );
+}
+
+}
+
+cv::Ptr<cv::FilterEngine> cv::createGaussianFilter( int type, Size ksize,
+                                        double sigma1, double sigma2,
+                                        int borderType )
+{
+    Mat kx, ky;
+    createGaussianKernels(kx, ky, type, ksize, sigma1, sigma2);
 
     return createSeparableLinearFilter( type, type, kx, ky, Point(-1,-1), 0, borderType );
 }
 
+namespace cv
+{
+#ifdef HAVE_OPENCL
+
+static bool ocl_GaussianBlur_8UC1(InputArray _src, OutputArray _dst, Size ksize, int ddepth,
+                                  InputArray _kernelX, InputArray _kernelY, int borderType)
+{
+    const ocl::Device & dev = ocl::Device::getDefault();
+    int type = _src.type(), sdepth = CV_MAT_DEPTH(type), cn = CV_MAT_CN(type);
+
+    if ( !(dev.isIntel() && (type == CV_8UC1) &&
+         (_src.offset() == 0) && (_src.step() % 4 == 0) &&
+         ((ksize.width == 5 && (_src.cols() % 4 == 0)) ||
+         (ksize.width == 3 && (_src.cols() % 16 == 0) && (_src.rows() % 2 == 0)))) )
+        return false;
+
+    Mat kernelX = _kernelX.getMat().reshape(1, 1);
+    if (kernelX.cols % 2 != 1)
+        return false;
+    Mat kernelY = _kernelY.getMat().reshape(1, 1);
+    if (kernelY.cols % 2 != 1)
+        return false;
+
+    if (ddepth < 0)
+        ddepth = sdepth;
+
+    Size size = _src.size();
+    size_t globalsize[2] = { 0, 0 };
+    size_t localsize[2] = { 0, 0 };
+
+    if (ksize.width == 3)
+    {
+        globalsize[0] = size.width / 16;
+        globalsize[1] = size.height / 2;
+    }
+    else if (ksize.width == 5)
+    {
+        globalsize[0] = size.width / 4;
+        globalsize[1] = size.height / 1;
+    }
+
+    const char * const borderMap[] = { "BORDER_CONSTANT", "BORDER_REPLICATE", "BORDER_REFLECT", 0, "BORDER_REFLECT_101" };
+    char build_opts[1024];
+    sprintf(build_opts, "-D %s %s%s", borderMap[borderType],
+            ocl::kernelToStr(kernelX, CV_32F, "KERNEL_MATRIX_X").c_str(),
+            ocl::kernelToStr(kernelY, CV_32F, "KERNEL_MATRIX_Y").c_str());
+
+    ocl::Kernel kernel;
+
+    if (ksize.width == 3)
+        kernel.create("gaussianBlur3x3_8UC1_cols16_rows2", cv::ocl::imgproc::gaussianBlur3x3_oclsrc, build_opts);
+    else if (ksize.width == 5)
+        kernel.create("gaussianBlur5x5_8UC1_cols4", cv::ocl::imgproc::gaussianBlur5x5_oclsrc, build_opts);
+
+    if (kernel.empty())
+        return false;
+
+    UMat src = _src.getUMat();
+    _dst.create(size, CV_MAKETYPE(ddepth, cn));
+    if (!(_dst.offset() == 0 && _dst.step() % 4 == 0))
+        return false;
+    UMat dst = _dst.getUMat();
+
+    int idxArg = kernel.set(0, ocl::KernelArg::PtrReadOnly(src));
+    idxArg = kernel.set(idxArg, (int)src.step);
+    idxArg = kernel.set(idxArg, ocl::KernelArg::PtrWriteOnly(dst));
+    idxArg = kernel.set(idxArg, (int)dst.step);
+    idxArg = kernel.set(idxArg, (int)dst.rows);
+    idxArg = kernel.set(idxArg, (int)dst.cols);
+
+    return kernel.run(2, globalsize, (localsize[0] == 0) ? NULL : localsize, false);
+}
+
+#endif
+
+#ifdef HAVE_OPENVX
+
+static bool openvx_gaussianBlur(InputArray _src, OutputArray _dst, Size ksize,
+                                double sigma1, double sigma2, int borderType)
+{
+    int stype = _src.type();
+    if (sigma2 <= 0)
+        sigma2 = sigma1;
+    // automatic detection of kernel size from sigma
+    if (ksize.width <= 0 && sigma1 > 0)
+        ksize.width = cvRound(sigma1*6 + 1) | 1;
+    if (ksize.height <= 0 && sigma2 > 0)
+        ksize.height = cvRound(sigma2*6 + 1) | 1;
+
+    if (stype != CV_8UC1 ||
+        ksize.width < 3 || ksize.height < 3 ||
+        ksize.width % 2 != 1 || ksize.height % 2 != 1)
+        return false;
+
+    sigma1 = std::max(sigma1, 0.);
+    sigma2 = std::max(sigma2, 0.);
+
+    Mat src = _src.getMat();
+    Mat dst = _dst.getMat();
+
+    if (src.cols < ksize.width || src.rows < ksize.height)
+        return false;
+
+    if ((borderType & BORDER_ISOLATED) == 0 && src.isSubmatrix())
+        return false; //Process isolated borders only
+    vx_enum border;
+    switch (borderType & ~BORDER_ISOLATED)
+    {
+    case BORDER_CONSTANT:
+        border = VX_BORDER_CONSTANT;
+        break;
+    case BORDER_REPLICATE:
+        border = VX_BORDER_REPLICATE;
+        break;
+    default:
+        return false;
+    }
+
+    try
+    {
+        ivx::Context ctx = ovx::getOpenVXContext();
+        if ((vx_size)(ksize.width) > ctx.convolutionMaxDimension() || (vx_size)(ksize.height) > ctx.convolutionMaxDimension())
+            return false;
+
+        Mat a;
+        if (dst.data != src.data)
+            a = src;
+        else
+            src.copyTo(a);
+
+        ivx::Image
+            ia = ivx::Image::createFromHandle(ctx, VX_DF_IMAGE_U8,
+                ivx::Image::createAddressing(a.cols, a.rows, 1, (vx_int32)(a.step)), a.data),
+            ib = ivx::Image::createFromHandle(ctx, VX_DF_IMAGE_U8,
+                ivx::Image::createAddressing(dst.cols, dst.rows, 1, (vx_int32)(dst.step)), dst.data);
+
+        //ATTENTION: VX_CONTEXT_IMMEDIATE_BORDER attribute change could lead to strange issues in multi-threaded environments
+        //since OpenVX standart says nothing about thread-safety for now
+        ivx::border_t prevBorder = ctx.immediateBorder();
+        ctx.setImmediateBorder(border, (vx_uint8)(0));
+        if (ksize.width == 3 && ksize.height == 3 && (sigma1 == 0.0 || (sigma1 - 0.8) < DBL_EPSILON) && (sigma2 == 0.0 || (sigma2 - 0.8) < DBL_EPSILON))
+        {
+            ivx::IVX_CHECK_STATUS(vxuGaussian3x3(ctx, ia, ib));
+        }
+        else
+        {
+#if VX_VERSION <= VX_VERSION_1_0
+            if (ctx.vendorID() == VX_ID_KHRONOS && ((vx_size)(a.cols) <= ctx.convolutionMaxDimension() || (vx_size)(a.rows) <= ctx.convolutionMaxDimension()))
+            {
+                ctx.setImmediateBorder(prevBorder);
+                return false;
+            }
+#endif
+            Mat convData;
+            cv::Mat(cv::getGaussianKernel(ksize.height, sigma2)*cv::getGaussianKernel(ksize.width, sigma1).t()).convertTo(convData, CV_16SC1, (1 << 15));
+            ivx::Convolution cnv = ivx::Convolution::create(ctx, convData.cols, convData.rows);
+            cnv.copyFrom(convData);
+            cnv.setScale(1 << 15);
+            ivx::IVX_CHECK_STATUS(vxuConvolve(ctx, ia, cnv, ib));
+        }
+        ctx.setImmediateBorder(prevBorder);
+    }
+    catch (ivx::RuntimeError & e)
+    {
+        VX_DbgThrow(e.what());
+    }
+    catch (ivx::WrapperError & e)
+    {
+        VX_DbgThrow(e.what());
+    }
+    return true;
+}
+
+#endif
+
+#ifdef HAVE_IPP
+static bool ipp_GaussianBlur(InputArray _src, OutputArray _dst, Size ksize,
+                   double sigma1, double sigma2, int borderType )
+{
+#ifdef HAVE_IPP_IW
+    CV_INSTRUMENT_REGION_IPP()
+
+#if IPP_VERSION_X100 <= 201702 && ((defined _MSC_VER && defined _M_IX86) || (defined __GNUC__ && defined __i386__))
+    CV_UNUSED(_src); CV_UNUSED(_dst); CV_UNUSED(ksize); CV_UNUSED(sigma1); CV_UNUSED(sigma2); CV_UNUSED(borderType);
+    return false; // bug on ia32
+#else
+    if(sigma1 != sigma2)
+        return false;
+
+    if(sigma1 < FLT_EPSILON)
+        return false;
+
+    if(ksize.width != ksize.height)
+        return false;
+
+    // Acquire data and begin processing
+    try
+    {
+        Mat src = _src.getMat();
+        Mat dst = _dst.getMat();
+        ::ipp::IwiImage iwSrc      = ippiGetImage(src);
+        ::ipp::IwiImage iwDst      = ippiGetImage(dst);
+        ::ipp::IwiBorderSize  borderSize(::ipp::IwiSize(ippiSize(ksize)));
+        ::ipp::IwiBorderType  ippBorder(ippiGetBorder(iwSrc, borderType, borderSize));
+        if(!ippBorder.m_borderType)
+            return false;
+
+        CV_INSTRUMENT_FUN_IPP(::ipp::iwiFilterGaussian, &iwSrc, &iwDst, ksize.width, (float)sigma1, ippBorder);
+    }
+    catch (::ipp::IwException ex)
+    {
+        return false;
+    }
+
+    return true;
+#endif
+#else
+    CV_UNUSED(_src); CV_UNUSED(_dst); CV_UNUSED(ksize); CV_UNUSED(sigma1); CV_UNUSED(sigma2); CV_UNUSED(borderType);
+    return false;
+#endif
+}
+#endif
+}
 
 void cv::GaussianBlur( InputArray _src, OutputArray _dst, Size ksize,
                    double sigma1, double sigma2,
                    int borderType )
 {
-    Mat src = _src.getMat();
-    _dst.create( src.size(), src.type() );
-    Mat dst = _dst.getMat();
+    CV_INSTRUMENT_REGION()
+
+    int type = _src.type();
+    Size size = _src.size();
+    _dst.create( size, type );
 
     if( borderType != BORDER_CONSTANT && (borderType & BORDER_ISOLATED) != 0 )
     {
-        if( src.rows == 1 )
+        if( size.height == 1 )
             ksize.height = 1;
-        if( src.cols == 1 )
+        if( size.width == 1 )
             ksize.width = 1;
     }
 
     if( ksize.width == 1 && ksize.height == 1 )
     {
-        src.copyTo(dst);
+        _src.copyTo(_dst);
         return;
     }
+
+    CV_OVX_RUN(true,
+               openvx_gaussianBlur(_src, _dst, ksize, sigma1, sigma2, borderType))
 
 #ifdef HAVE_TEGRA_OPTIMIZATION
-    if(sigma1 == 0 && sigma2 == 0 && tegra::gaussian(src, dst, ksize, borderType))
+    Mat src = _src.getMat();
+    Mat dst = _dst.getMat();
+    if(sigma1 == 0 && sigma2 == 0 && tegra::useTegra() && tegra::gaussian(src, dst, ksize, borderType))
         return;
 #endif
+    bool useOpenCL = (_dst.isUMat() && _src.dims() <= 2 &&
+               ((ksize.width == 3 && ksize.height == 3) ||
+               (ksize.width == 5 && ksize.height == 5)) &&
+               _src.rows() > ksize.height && _src.cols() > ksize.width);
+    (void)useOpenCL;
 
-#if defined HAVE_IPP && (IPP_VERSION_MAJOR >= 7)
-    if(src.type() == CV_32FC1 && sigma1 == sigma2 && ksize.width == ksize.height && sigma1 != 0.0 )
-    {
-        IppiSize roi = {src.cols, src.rows};
-        int bufSize = 0;
-        ippiFilterGaussGetBufferSize_32f_C1R(roi, ksize.width, &bufSize);
-        AutoBuffer<uchar> buf(bufSize+128);
-        if( ippiFilterGaussBorder_32f_C1R((const Ipp32f *)src.data, (int)src.step,
-                                          (Ipp32f *)dst.data, (int)dst.step,
-                                          roi, ksize.width, (Ipp32f)sigma1,
-                                          (IppiBorderType)borderType, 0.0,
-                                          alignPtr(&buf[0],32)) >= 0 )
-            return;
-    }
-#endif
+    CV_IPP_RUN(!useOpenCL, ipp_GaussianBlur( _src,  _dst,  ksize, sigma1,  sigma2, borderType));
 
-    Ptr<FilterEngine> f = createGaussianFilter( src.type(), ksize, sigma1, sigma2, borderType );
-    f->apply( src, dst );
+    Mat kx, ky;
+    createGaussianKernels(kx, ky, type, ksize, sigma1, sigma2);
+
+    CV_OCL_RUN(useOpenCL, ocl_GaussianBlur_8UC1(_src, _dst, ksize, CV_MAT_DEPTH(type), kx, ky, borderType));
+
+    sepFilter2D(_src, _dst, CV_MAT_DEPTH(type), kx, ky, Point(-1,-1), 0, borderType );
 }
-
 
 /****************************************************************************************\
                                       Median Filter
@@ -923,6 +2438,21 @@ static inline void histogram_sub_simd( const HT x[16], HT y[16] )
     __m128i r1 = _mm_sub_epi16(_mm_load_si128(ry+1),_mm_load_si128(rx+1));
     _mm_store_si128(ry+0, r0);
     _mm_store_si128(ry+1, r1);
+}
+
+#elif CV_NEON
+#define MEDIAN_HAVE_SIMD 1
+
+static inline void histogram_add_simd( const HT x[16], HT y[16] )
+{
+    vst1q_u16(y, vaddq_u16(vld1q_u16(x), vld1q_u16(y)));
+    vst1q_u16(y + 8, vaddq_u16(vld1q_u16(x + 8), vld1q_u16(y + 8)));
+}
+
+static inline void histogram_sub_simd( const HT x[16], HT y[16] )
+{
+    vst1q_u16(y, vsubq_u16(vld1q_u16(y), vld1q_u16(x)));
+    vst1q_u16(y + 8, vsubq_u16(vld1q_u16(y + 8), vld1q_u16(x + 8)));
 }
 
 #else
@@ -973,19 +2503,19 @@ medianBlur_8u_O1( const Mat& _src, Mat& _dst, int ksize )
 
     int STRIPE_SIZE = std::min( _dst.cols, 512/cn );
 
-    vector<HT> _h_coarse(1 * 16 * (STRIPE_SIZE + 2*r) * cn + 16);
-    vector<HT> _h_fine(16 * 16 * (STRIPE_SIZE + 2*r) * cn + 16);
+    std::vector<HT> _h_coarse(1 * 16 * (STRIPE_SIZE + 2*r) * cn + 16);
+    std::vector<HT> _h_fine(16 * 16 * (STRIPE_SIZE + 2*r) * cn + 16);
     HT* h_coarse = alignPtr(&_h_coarse[0], 16);
     HT* h_fine = alignPtr(&_h_fine[0], 16);
 #if MEDIAN_HAVE_SIMD
-    volatile bool useSIMD = checkHardwareSupport(CV_CPU_SSE2);
+    volatile bool useSIMD = checkHardwareSupport(CV_CPU_SSE2) || checkHardwareSupport(CV_CPU_NEON);
 #endif
 
     for( int x = 0; x < _dst.cols; x += STRIPE_SIZE )
     {
         int i, j, k, c, n = std::min(_dst.cols - x, STRIPE_SIZE) + r*2;
-        const uchar* src = _src.data + x*cn;
-        uchar* dst = _dst.data + (x - r)*cn;
+        const uchar* src = _src.ptr() + x*cn;
+        uchar* dst = _dst.ptr() + (x - r)*cn;
 
         memset( h_coarse, 0, 16*n*cn*sizeof(h_coarse[0]) );
         memset( h_fine, 0, 16*16*n*cn*sizeof(h_fine[0]) );
@@ -1167,8 +2697,8 @@ medianBlur_8u_Om( const Mat& _src, Mat& _dst, int m )
     int     x, y;
     int     n2 = m*m/2;
     Size    size = _dst.size();
-    const uchar* src = _src.data;
-    uchar*  dst = _dst.data;
+    const uchar* src = _src.ptr();
+    uchar*  dst = _dst.ptr();
     int     src_step = (int)_src.step, dst_step = (int)_dst.step;
     int     cn = _src.channels();
     const uchar*  src_max = src + size.height*src_step;
@@ -1426,6 +2956,71 @@ struct MinMaxVec32f
     }
 };
 
+#elif CV_NEON
+
+struct MinMaxVec8u
+{
+    typedef uchar value_type;
+    typedef uint8x16_t arg_type;
+    enum { SIZE = 16 };
+    arg_type load(const uchar* ptr) { return vld1q_u8(ptr); }
+    void store(uchar* ptr, arg_type val) { vst1q_u8(ptr, val); }
+    void operator()(arg_type& a, arg_type& b) const
+    {
+        arg_type t = a;
+        a = vminq_u8(a, b);
+        b = vmaxq_u8(b, t);
+    }
+};
+
+
+struct MinMaxVec16u
+{
+    typedef ushort value_type;
+    typedef uint16x8_t arg_type;
+    enum { SIZE = 8 };
+    arg_type load(const ushort* ptr) { return vld1q_u16(ptr); }
+    void store(ushort* ptr, arg_type val) { vst1q_u16(ptr, val); }
+    void operator()(arg_type& a, arg_type& b) const
+    {
+        arg_type t = a;
+        a = vminq_u16(a, b);
+        b = vmaxq_u16(b, t);
+    }
+};
+
+
+struct MinMaxVec16s
+{
+    typedef short value_type;
+    typedef int16x8_t arg_type;
+    enum { SIZE = 8 };
+    arg_type load(const short* ptr) { return vld1q_s16(ptr); }
+    void store(short* ptr, arg_type val) { vst1q_s16(ptr, val); }
+    void operator()(arg_type& a, arg_type& b) const
+    {
+        arg_type t = a;
+        a = vminq_s16(a, b);
+        b = vmaxq_s16(b, t);
+    }
+};
+
+
+struct MinMaxVec32f
+{
+    typedef float value_type;
+    typedef float32x4_t arg_type;
+    enum { SIZE = 4 };
+    arg_type load(const float* ptr) { return vld1q_f32(ptr); }
+    void store(float* ptr, arg_type val) { vst1q_f32(ptr, val); }
+    void operator()(arg_type& a, arg_type& b) const
+    {
+        arg_type t = a;
+        a = vminq_f32(a, b);
+        b = vmaxq_f32(b, t);
+    }
+};
+
 
 #else
 
@@ -1444,15 +3039,15 @@ medianBlur_SortNet( const Mat& _src, Mat& _dst, int m )
     typedef typename Op::arg_type WT;
     typedef typename VecOp::arg_type VT;
 
-    const T* src = (const T*)_src.data;
-    T* dst = (T*)_dst.data;
+    const T* src = _src.ptr<T>();
+    T* dst = _dst.ptr<T>();
     int sstep = (int)(_src.step/sizeof(T));
     int dstep = (int)(_dst.step/sizeof(T));
     Size size = _dst.size();
     int i, j, k, cn = _src.channels();
     Op op;
     VecOp vop;
-    volatile bool useSIMD = checkHardwareSupport(CV_CPU_SSE2);
+    volatile bool useSIMD = checkHardwareSupport(CV_CPU_SSE2) || checkHardwareSupport(CV_CPU_NEON);
 
     if( m == 3 )
     {
@@ -1648,30 +3243,246 @@ medianBlur_SortNet( const Mat& _src, Mat& _dst, int m )
     }
 }
 
+#ifdef HAVE_OPENCL
+
+static bool ocl_medianFilter(InputArray _src, OutputArray _dst, int m)
+{
+    size_t localsize[2] = { 16, 16 };
+    size_t globalsize[2];
+    int type = _src.type(), depth = CV_MAT_DEPTH(type), cn = CV_MAT_CN(type);
+
+    if ( !((depth == CV_8U || depth == CV_16U || depth == CV_16S || depth == CV_32F) && cn <= 4 && (m == 3 || m == 5)) )
+        return false;
+
+    Size imgSize = _src.size();
+    bool useOptimized = (1 == cn) &&
+                        (size_t)imgSize.width >= localsize[0] * 8  &&
+                        (size_t)imgSize.height >= localsize[1] * 8 &&
+                        imgSize.width % 4 == 0 &&
+                        imgSize.height % 4 == 0 &&
+                        (ocl::Device::getDefault().isIntel());
+
+    cv::String kname = format( useOptimized ? "medianFilter%d_u" : "medianFilter%d", m) ;
+    cv::String kdefs = useOptimized ?
+                         format("-D T=%s -D T1=%s -D T4=%s%d -D cn=%d -D USE_4OPT", ocl::typeToStr(type),
+                         ocl::typeToStr(depth), ocl::typeToStr(depth), cn*4, cn)
+                         :
+                         format("-D T=%s -D T1=%s -D cn=%d", ocl::typeToStr(type), ocl::typeToStr(depth), cn) ;
+
+    ocl::Kernel k(kname.c_str(), ocl::imgproc::medianFilter_oclsrc, kdefs.c_str() );
+
+    if (k.empty())
+        return false;
+
+    UMat src = _src.getUMat();
+    _dst.create(src.size(), type);
+    UMat dst = _dst.getUMat();
+
+    k.args(ocl::KernelArg::ReadOnlyNoSize(src), ocl::KernelArg::WriteOnly(dst));
+
+    if( useOptimized )
+    {
+        globalsize[0] = DIVUP(src.cols / 4, localsize[0]) * localsize[0];
+        globalsize[1] = DIVUP(src.rows / 4, localsize[1]) * localsize[1];
+    }
+    else
+    {
+        globalsize[0] = (src.cols + localsize[0] + 2) / localsize[0] * localsize[0];
+        globalsize[1] = (src.rows + localsize[1] - 1) / localsize[1] * localsize[1];
+    }
+
+    return k.run(2, globalsize, localsize, false);
 }
+
+#endif
+
+}
+
+#ifdef HAVE_OPENVX
+namespace cv
+{
+    static bool openvx_medianFilter(InputArray _src, OutputArray _dst, int ksize)
+    {
+        if (_src.type() != CV_8UC1 || _dst.type() != CV_8U
+#ifndef VX_VERSION_1_1
+            || ksize != 3
+#endif
+            )
+            return false;
+
+        Mat src = _src.getMat();
+        Mat dst = _dst.getMat();
+
+        try
+        {
+            ivx::Context ctx = ovx::getOpenVXContext();
+#ifdef VX_VERSION_1_1
+            if ((vx_size)ksize > ctx.nonlinearMaxDimension())
+                return false;
+#endif
+
+            Mat a;
+            if (dst.data != src.data)
+                a = src;
+            else
+                src.copyTo(a);
+
+            ivx::Image
+                ia = ivx::Image::createFromHandle(ctx, VX_DF_IMAGE_U8,
+                    ivx::Image::createAddressing(a.cols, a.rows, 1, (vx_int32)(a.step)), a.data),
+                ib = ivx::Image::createFromHandle(ctx, VX_DF_IMAGE_U8,
+                    ivx::Image::createAddressing(dst.cols, dst.rows, 1, (vx_int32)(dst.step)), dst.data);
+
+            //ATTENTION: VX_CONTEXT_IMMEDIATE_BORDER attribute change could lead to strange issues in multi-threaded environments
+            //since OpenVX standart says nothing about thread-safety for now
+            ivx::border_t prevBorder = ctx.immediateBorder();
+            ctx.setImmediateBorder(VX_BORDER_REPLICATE);
+#ifdef VX_VERSION_1_1
+            if (ksize == 3)
+#endif
+            {
+                ivx::IVX_CHECK_STATUS(vxuMedian3x3(ctx, ia, ib));
+            }
+#ifdef VX_VERSION_1_1
+            else
+            {
+                ivx::Matrix mtx;
+                if(ksize == 5)
+                    mtx = ivx::Matrix::createFromPattern(ctx, VX_PATTERN_BOX, ksize, ksize);
+                else
+                {
+                    vx_size supportedSize;
+                    ivx::IVX_CHECK_STATUS(vxQueryContext(ctx, VX_CONTEXT_NONLINEAR_MAX_DIMENSION, &supportedSize, sizeof(supportedSize)));
+                    if ((vx_size)ksize > supportedSize)
+                    {
+                        ctx.setImmediateBorder(prevBorder);
+                        return false;
+                    }
+                    Mat mask(ksize, ksize, CV_8UC1, Scalar(255));
+                    mtx = ivx::Matrix::create(ctx, VX_TYPE_UINT8, ksize, ksize);
+                    mtx.copyFrom(mask);
+                }
+                ivx::IVX_CHECK_STATUS(vxuNonLinearFilter(ctx, VX_NONLINEAR_FILTER_MEDIAN, ia, mtx, ib));
+            }
+#endif
+            ctx.setImmediateBorder(prevBorder);
+        }
+        catch (ivx::RuntimeError & e)
+        {
+            VX_DbgThrow(e.what());
+        }
+        catch (ivx::WrapperError & e)
+        {
+            VX_DbgThrow(e.what());
+        }
+
+        return true;
+    }
+}
+#endif
+
+#ifdef HAVE_IPP
+namespace cv
+{
+static bool ipp_medianFilter(Mat &src0, Mat &dst, int ksize)
+{
+    CV_INSTRUMENT_REGION_IPP()
+
+    {
+        int         bufSize;
+        IppiSize    dstRoiSize = ippiSize(dst.cols, dst.rows), maskSize = ippiSize(ksize, ksize);
+        IppDataType ippType = ippiGetDataType(src0.type());
+        int         channels = src0.channels();
+        IppAutoBuffer<Ipp8u> buffer;
+
+        if(src0.isSubmatrix())
+            return false;
+
+        Mat src;
+        if(dst.data != src0.data)
+            src = src0;
+        else
+            src0.copyTo(src);
+
+        if(ippiFilterMedianBorderGetBufferSize(dstRoiSize, maskSize, ippType, channels, &bufSize) < 0)
+            return false;
+
+        buffer.allocate(bufSize);
+
+        switch(ippType)
+        {
+        case ipp8u:
+            if(channels == 1)
+                return CV_INSTRUMENT_FUN_IPP(ippiFilterMedianBorder_8u_C1R, src.ptr<Ipp8u>(), (int)src.step, dst.ptr<Ipp8u>(), (int)dst.step, dstRoiSize, maskSize, ippBorderRepl, 0, buffer) >= 0;
+            else if(channels == 3)
+                return CV_INSTRUMENT_FUN_IPP(ippiFilterMedianBorder_8u_C3R, src.ptr<Ipp8u>(), (int)src.step, dst.ptr<Ipp8u>(), (int)dst.step, dstRoiSize, maskSize, ippBorderRepl, 0, buffer) >= 0;
+            else if(channels == 4)
+                return CV_INSTRUMENT_FUN_IPP(ippiFilterMedianBorder_8u_C4R, src.ptr<Ipp8u>(), (int)src.step, dst.ptr<Ipp8u>(), (int)dst.step, dstRoiSize, maskSize, ippBorderRepl, 0, buffer) >= 0;
+            else
+                return false;
+        case ipp16u:
+            if(channels == 1)
+                return CV_INSTRUMENT_FUN_IPP(ippiFilterMedianBorder_16u_C1R, src.ptr<Ipp16u>(), (int)src.step, dst.ptr<Ipp16u>(), (int)dst.step, dstRoiSize, maskSize, ippBorderRepl, 0, buffer) >= 0;
+            else if(channels == 3)
+                return CV_INSTRUMENT_FUN_IPP(ippiFilterMedianBorder_16u_C3R, src.ptr<Ipp16u>(), (int)src.step, dst.ptr<Ipp16u>(), (int)dst.step, dstRoiSize, maskSize, ippBorderRepl, 0, buffer) >= 0;
+            else if(channels == 4)
+                return CV_INSTRUMENT_FUN_IPP(ippiFilterMedianBorder_16u_C4R, src.ptr<Ipp16u>(), (int)src.step, dst.ptr<Ipp16u>(), (int)dst.step, dstRoiSize, maskSize, ippBorderRepl, 0, buffer) >= 0;
+            else
+                return false;
+        case ipp16s:
+            if(channels == 1)
+                return CV_INSTRUMENT_FUN_IPP(ippiFilterMedianBorder_16s_C1R, src.ptr<Ipp16s>(), (int)src.step, dst.ptr<Ipp16s>(), (int)dst.step, dstRoiSize, maskSize, ippBorderRepl, 0, buffer) >= 0;
+            else if(channels == 3)
+                return CV_INSTRUMENT_FUN_IPP(ippiFilterMedianBorder_16s_C3R, src.ptr<Ipp16s>(), (int)src.step, dst.ptr<Ipp16s>(), (int)dst.step, dstRoiSize, maskSize, ippBorderRepl, 0, buffer) >= 0;
+            else if(channels == 4)
+                return CV_INSTRUMENT_FUN_IPP(ippiFilterMedianBorder_16s_C4R, src.ptr<Ipp16s>(), (int)src.step, dst.ptr<Ipp16s>(), (int)dst.step, dstRoiSize, maskSize, ippBorderRepl, 0, buffer) >= 0;
+            else
+                return false;
+        case ipp32f:
+            if(channels == 1)
+                return CV_INSTRUMENT_FUN_IPP(ippiFilterMedianBorder_32f_C1R, src.ptr<Ipp32f>(), (int)src.step, dst.ptr<Ipp32f>(), (int)dst.step, dstRoiSize, maskSize, ippBorderRepl, 0, buffer) >= 0;
+            else
+                return false;
+        default:
+            return false;
+        }
+    }
+}
+}
+#endif
 
 void cv::medianBlur( InputArray _src0, OutputArray _dst, int ksize )
 {
+    CV_INSTRUMENT_REGION()
+
+    CV_Assert( (ksize % 2 == 1) && (_src0.dims() <= 2 ));
+
+    if( ksize <= 1 || _src0.empty() )
+    {
+        _src0.copyTo(_dst);
+        return;
+    }
+
+    CV_OCL_RUN(_dst.isUMat(),
+               ocl_medianFilter(_src0,_dst, ksize))
+
     Mat src0 = _src0.getMat();
     _dst.create( src0.size(), src0.type() );
     Mat dst = _dst.getMat();
 
-    if( ksize <= 1 )
-    {
-        src0.copyTo(dst);
-        return;
-    }
+    CV_OVX_RUN(true,
+               openvx_medianFilter(_src0, _dst, ksize))
 
-    CV_Assert( ksize % 2 == 1 );
+    CV_IPP_RUN_FAST(ipp_medianFilter(src0, dst, ksize));
 
 #ifdef HAVE_TEGRA_OPTIMIZATION
-    if (tegra::medianBlur(src0, dst, ksize))
+    if (tegra::useTegra() && tegra::medianBlur(src0, dst, ksize))
         return;
 #endif
 
     bool useSortNet = ksize == 3 || (ksize == 5
-#if !CV_SSE2
-            && src0.depth() > CV_8U
+#if !(CV_SSE2 || CV_NEON)
+            && ( src0.depth() > CV_8U || src0.channels() == 2 || src0.channels() > 4 )
 #endif
         );
 
@@ -1704,7 +3515,8 @@ void cv::medianBlur( InputArray _src0, OutputArray _dst, int ksize )
         CV_Assert( src.depth() == CV_8U && (cn == 1 || cn == 3 || cn == 4) );
 
         double img_size_mp = (double)(src0.total())/(1 << 20);
-        if( ksize <= 3 + (img_size_mp < 1 ? 12 : img_size_mp < 4 ? 6 : 2)*(MEDIAN_HAVE_SIMD && checkHardwareSupport(CV_CPU_SSE2) ? 1 : 3))
+        if( ksize <= 3 + (img_size_mp < 1 ? 12 : img_size_mp < 4 ? 6 : 2)*
+            (MEDIAN_HAVE_SIMD && (checkHardwareSupport(CV_CPU_SSE2) || checkHardwareSupport(CV_CPU_NEON)) ? 1 : 3))
             medianBlur_8u_Om( src, dst, ksize );
         else
             medianBlur_8u_O1( src, dst, ksize );
@@ -1788,7 +3600,7 @@ public:
                         sum += val*w;
                         wsum += w;
                     }
-                    // overflow is not possible here => there is no need to use CV_CAST_8U
+                    // overflow is not possible here => there is no need to use cv::saturate_cast
                     dptr[j] = (uchar)cvRound(sum/wsum);
                 }
             }
@@ -1803,6 +3615,7 @@ public:
                     #if CV_SSE3
                     if( haveSSE3 )
                     {
+                        const __m128i izero = _mm_setzero_si128();
                         const __m128 _b0 = _mm_set1_ps(static_cast<float>(b0));
                         const __m128 _g0 = _mm_set1_ps(static_cast<float>(g0));
                         const __m128 _r0 = _mm_set1_ps(static_cast<float>(r0));
@@ -1810,14 +3623,17 @@ public:
 
                         for( ; k <= maxk - 4; k += 4 )
                         {
-                            const uchar* sptr_k  = sptr + j + space_ofs[k];
-                            const uchar* sptr_k1 = sptr + j + space_ofs[k+1];
-                            const uchar* sptr_k2 = sptr + j + space_ofs[k+2];
-                            const uchar* sptr_k3 = sptr + j + space_ofs[k+3];
+                            const int* const sptr_k0  = reinterpret_cast<const int*>(sptr + j + space_ofs[k]);
+                            const int* const sptr_k1  = reinterpret_cast<const int*>(sptr + j + space_ofs[k+1]);
+                            const int* const sptr_k2  = reinterpret_cast<const int*>(sptr + j + space_ofs[k+2]);
+                            const int* const sptr_k3  = reinterpret_cast<const int*>(sptr + j + space_ofs[k+3]);
 
-                            __m128 _b = _mm_set_ps(sptr_k3[0],sptr_k2[0],sptr_k1[0],sptr_k[0]);
-                            __m128 _g = _mm_set_ps(sptr_k3[1],sptr_k2[1],sptr_k1[1],sptr_k[1]);
-                            __m128 _r = _mm_set_ps(sptr_k3[2],sptr_k2[2],sptr_k1[2],sptr_k[2]);
+                            __m128 _b = _mm_cvtepi32_ps(_mm_unpacklo_epi16(_mm_unpacklo_epi8(_mm_cvtsi32_si128(sptr_k0[0]), izero), izero));
+                            __m128 _g = _mm_cvtepi32_ps(_mm_unpacklo_epi16(_mm_unpacklo_epi8(_mm_cvtsi32_si128(sptr_k1[0]), izero), izero));
+                            __m128 _r = _mm_cvtepi32_ps(_mm_unpacklo_epi16(_mm_unpacklo_epi8(_mm_cvtsi32_si128(sptr_k2[0]), izero), izero));
+                            __m128 _z = _mm_cvtepi32_ps(_mm_unpacklo_epi16(_mm_unpacklo_epi8(_mm_cvtsi32_si128(sptr_k3[0]), izero), izero));
+
+                            _MM_TRANSPOSE4_PS(_b, _g, _r, _z);
 
                             __m128 bt = _mm_andnot_ps(_signMask, _mm_sub_ps(_b,_b0));
                             __m128 gt = _mm_andnot_ps(_signMask, _mm_sub_ps(_g,_g0));
@@ -1835,16 +3651,16 @@ public:
                             _g = _mm_mul_ps(_g, _w);
                             _r = _mm_mul_ps(_r, _w);
 
-                             _w = _mm_hadd_ps(_w, _b);
-                             _g = _mm_hadd_ps(_g, _r);
+                            _w = _mm_hadd_ps(_w, _b);
+                            _g = _mm_hadd_ps(_g, _r);
 
-                             _w = _mm_hadd_ps(_w, _g);
-                             _mm_store_ps(bufSum, _w);
+                            _w = _mm_hadd_ps(_w, _g);
+                            _mm_store_ps(bufSum, _w);
 
-                             wsum  += bufSum[0];
-                             sum_b += bufSum[1];
-                             sum_g += bufSum[2];
-                             sum_r += bufSum[3];
+                            wsum  += bufSum[0];
+                            sum_b += bufSum[1];
+                            sum_g += bufSum[2];
+                            sum_r += bufSum[3];
                          }
                     }
                     #endif
@@ -1875,7 +3691,7 @@ private:
     float *space_weight, *color_weight;
 };
 
-#if defined (HAVE_IPP) && (IPP_VERSION_MAJOR >= 7)
+#if defined (HAVE_IPP) && IPP_DISABLE_BLOCK
 class IPPBilateralFilter_8u_Invoker :
     public ParallelLoopBody
 {
@@ -1892,12 +3708,24 @@ public:
           IppiSize kernel = {d, d};
           IppiSize roi={dst.cols, range.end - range.start};
           int bufsize=0;
-          ippiFilterBilateralGetBufSize_8u_C1R( ippiFilterBilateralGauss, roi, kernel, &bufsize);
+          if (0 > ippiFilterBilateralGetBufSize_8u_C1R( ippiFilterBilateralGauss, roi, kernel, &bufsize))
+          {
+              *ok = false;
+              return;
+          }
           AutoBuffer<uchar> buf(bufsize);
           IppiFilterBilateralSpec *pSpec = (IppiFilterBilateralSpec *)alignPtr(&buf[0], 32);
-          ippiFilterBilateralInit_8u_C1R( ippiFilterBilateralGauss, kernel, (Ipp32f)sigma_color, (Ipp32f)sigma_space, 1, pSpec );
-          if( ippiFilterBilateral_8u_C1R( src.ptr<uchar>(range.start) + radius * ((int)src.step[0] + 1), (int)src.step[0], dst.ptr<uchar>(range.start), (int)dst.step[0], roi, kernel, pSpec ) < 0)
+          if (0 > ippiFilterBilateralInit_8u_C1R( ippiFilterBilateralGauss, kernel, (Ipp32f)sigma_color, (Ipp32f)sigma_space, 1, pSpec ))
+          {
               *ok = false;
+              return;
+          }
+          if (0 > ippiFilterBilateral_8u_C1R( src.ptr<uchar>(range.start) + radius * ((int)src.step[0] + 1), (int)src.step[0], dst.ptr<uchar>(range.start), (int)dst.step[0], roi, kernel, pSpec ))
+              *ok = false;
+          else
+          {
+            CV_IMPL_ADD(CV_IMPL_IPP|CV_IMPL_MT);
+          }
       }
 private:
     Mat &src;
@@ -1910,19 +3738,110 @@ private:
 };
 #endif
 
+#ifdef HAVE_OPENCL
+
+static bool ocl_bilateralFilter_8u(InputArray _src, OutputArray _dst, int d,
+                                   double sigma_color, double sigma_space,
+                                   int borderType)
+{
+#ifdef ANDROID
+    if (ocl::Device::getDefault().isNVidia())
+        return false;
+#endif
+
+    int type = _src.type(), depth = CV_MAT_DEPTH(type), cn = CV_MAT_CN(type);
+    int i, j, maxk, radius;
+
+    if (depth != CV_8U || cn > 4)
+        return false;
+
+    if (sigma_color <= 0)
+        sigma_color = 1;
+    if (sigma_space <= 0)
+        sigma_space = 1;
+
+    double gauss_color_coeff = -0.5 / (sigma_color * sigma_color);
+    double gauss_space_coeff = -0.5 / (sigma_space * sigma_space);
+
+    if ( d <= 0 )
+        radius = cvRound(sigma_space * 1.5);
+    else
+        radius = d / 2;
+    radius = MAX(radius, 1);
+    d = radius * 2 + 1;
+
+    UMat src = _src.getUMat(), dst = _dst.getUMat(), temp;
+    if (src.u == dst.u)
+        return false;
+
+    copyMakeBorder(src, temp, radius, radius, radius, radius, borderType);
+    std::vector<float> _space_weight(d * d);
+    std::vector<int> _space_ofs(d * d);
+    float * const space_weight = &_space_weight[0];
+    int * const space_ofs = &_space_ofs[0];
+
+    // initialize space-related bilateral filter coefficients
+    for( i = -radius, maxk = 0; i <= radius; i++ )
+        for( j = -radius; j <= radius; j++ )
+        {
+            double r = std::sqrt((double)i * i + (double)j * j);
+            if ( r > radius )
+                continue;
+            space_weight[maxk] = (float)std::exp(r * r * gauss_space_coeff);
+            space_ofs[maxk++] = (int)(i * temp.step + j * cn);
+        }
+
+    char cvt[3][40];
+    String cnstr = cn > 1 ? format("%d", cn) : "";
+    String kernelName("bilateral");
+    size_t sizeDiv = 1;
+    if ((ocl::Device::getDefault().isIntel()) &&
+        (ocl::Device::getDefault().type() == ocl::Device::TYPE_GPU))
+    {
+            //Intel GPU
+            if (dst.cols % 4 == 0 && cn == 1) // For single channel x4 sized images.
+            {
+                kernelName = "bilateral_float4";
+                sizeDiv = 4;
+            }
+     }
+     ocl::Kernel k(kernelName.c_str(), ocl::imgproc::bilateral_oclsrc,
+            format("-D radius=%d -D maxk=%d -D cn=%d -D int_t=%s -D uint_t=uint%s -D convert_int_t=%s"
+            " -D uchar_t=%s -D float_t=%s -D convert_float_t=%s -D convert_uchar_t=%s -D gauss_color_coeff=(float)%f",
+            radius, maxk, cn, ocl::typeToStr(CV_32SC(cn)), cnstr.c_str(),
+            ocl::convertTypeStr(CV_8U, CV_32S, cn, cvt[0]),
+            ocl::typeToStr(type), ocl::typeToStr(CV_32FC(cn)),
+            ocl::convertTypeStr(CV_32S, CV_32F, cn, cvt[1]),
+            ocl::convertTypeStr(CV_32F, CV_8U, cn, cvt[2]), gauss_color_coeff));
+    if (k.empty())
+        return false;
+
+    Mat mspace_weight(1, d * d, CV_32FC1, space_weight);
+    Mat mspace_ofs(1, d * d, CV_32SC1, space_ofs);
+    UMat ucolor_weight, uspace_weight, uspace_ofs;
+
+    mspace_weight.copyTo(uspace_weight);
+    mspace_ofs.copyTo(uspace_ofs);
+
+    k.args(ocl::KernelArg::ReadOnlyNoSize(temp), ocl::KernelArg::WriteOnly(dst),
+           ocl::KernelArg::PtrReadOnly(uspace_weight),
+           ocl::KernelArg::PtrReadOnly(uspace_ofs));
+
+    size_t globalsize[2] = { (size_t)dst.cols / sizeDiv, (size_t)dst.rows };
+    return k.run(2, globalsize, NULL, false);
+}
+
+#endif
 static void
 bilateralFilter_8u( const Mat& src, Mat& dst, int d,
     double sigma_color, double sigma_space,
     int borderType )
 {
-
     int cn = src.channels();
     int i, j, maxk, radius;
     Size size = src.size();
 
-    CV_Assert( (src.type() == CV_8UC1 || src.type() == CV_8UC3) &&
-              src.type() == dst.type() && src.size() == dst.size() &&
-              src.data != dst.data );
+    CV_Assert( (src.type() == CV_8UC1 || src.type() == CV_8UC3) && src.data != dst.data );
 
     if( sigma_color <= 0 )
         sigma_color = 1;
@@ -1942,19 +3861,27 @@ bilateralFilter_8u( const Mat& src, Mat& dst, int d,
     Mat temp;
     copyMakeBorder( src, temp, radius, radius, radius, radius, borderType );
 
-#if defined HAVE_IPP && (IPP_VERSION_MAJOR >= 7)
-    if( cn == 1 )
+#if defined HAVE_IPP && (IPP_VERSION_X100 >= 700) && IPP_DISABLE_BLOCK
+    CV_IPP_CHECK()
     {
-        bool ok;
-        IPPBilateralFilter_8u_Invoker body(temp, dst, sigma_color * sigma_color, sigma_space * sigma_space, radius, &ok );
-        parallel_for_(Range(0, dst.rows), body, dst.total()/(double)(1<<16));
-        if( ok ) return;
+        if( cn == 1 )
+        {
+            bool ok;
+            IPPBilateralFilter_8u_Invoker body(temp, dst, sigma_color * sigma_color, sigma_space * sigma_space, radius, &ok );
+            parallel_for_(Range(0, dst.rows), body, dst.total()/(double)(1<<16));
+            if( ok )
+            {
+                CV_IMPL_ADD(CV_IMPL_IPP|CV_IMPL_MT);
+                return;
+            }
+            setIppErrorStatus();
+        }
     }
 #endif
 
-    vector<float> _color_weight(cn*256);
-    vector<float> _space_weight(d*d);
-    vector<int> _space_ofs(d*d);
+    std::vector<float> _color_weight(cn*256);
+    std::vector<float> _space_weight(d*d);
+    std::vector<int> _space_ofs(d*d);
     float* color_weight = &_color_weight[0];
     float* space_weight = &_space_weight[0];
     int* space_ofs = &_space_ofs[0];
@@ -1969,7 +3896,7 @@ bilateralFilter_8u( const Mat& src, Mat& dst, int d,
     {
         j = -radius;
 
-        for( ;j <= radius; j++ )
+        for( ; j <= radius; j++ )
         {
             double r = std::sqrt((double)i*i + (double)j*j);
             if( r > radius )
@@ -2000,11 +3927,15 @@ public:
     {
         int i, j, k;
         Size size = dest->size();
-        #if CV_SSE3
+        #if CV_SSE3 || CV_NEON
         int CV_DECL_ALIGNED(16) idxBuf[4];
         float CV_DECL_ALIGNED(16) bufSum32[4];
         static const unsigned int CV_DECL_ALIGNED(16) bufSignMask[] = { 0x80000000, 0x80000000, 0x80000000, 0x80000000 };
+        #endif
+        #if CV_SSE3
         bool haveSSE3 = checkHardwareSupport(CV_CPU_SSE3);
+        #elif CV_NEON
+        bool haveNEON = checkHardwareSupport(CV_CPU_NEON);
         #endif
 
         for( i = range.start; i < range.end; i++ )
@@ -2022,6 +3953,7 @@ public:
                     #if CV_SSE3
                     if( haveSSE3 )
                     {
+                        __m128 psum = _mm_setzero_ps();
                         const __m128 _val0 = _mm_set1_ps(sptr[j]);
                         const __m128 _scale_index = _mm_set1_ps(scale_index);
                         const __m128 _signMask = _mm_load_ps((const float*)bufSignMask);
@@ -2045,13 +3977,55 @@ public:
                             __m128 _w = _mm_mul_ps(_sw, _mm_add_ps(_explut, _mm_mul_ps(_alpha, _mm_sub_ps(_explut1, _explut))));
                             _val = _mm_mul_ps(_w, _val);
 
-                             _sw = _mm_hadd_ps(_w, _val);
-                             _sw = _mm_hadd_ps(_sw, _sw);
-                             _mm_storel_pi((__m64*)bufSum32, _sw);
-
-                             sum += bufSum32[1];
-                             wsum += bufSum32[0];
+                            _sw = _mm_hadd_ps(_w, _val);
+                            _sw = _mm_hadd_ps(_sw, _sw);
+                            psum = _mm_add_ps(_sw, psum);
                         }
+                        _mm_storel_pi((__m64*)bufSum32, psum);
+
+                        sum = bufSum32[1];
+                        wsum = bufSum32[0];
+                    }
+                    #elif CV_NEON
+                    if( haveNEON )
+                    {
+                        float32x2_t psum = vdup_n_f32(0.0f);
+                        const volatile float32x4_t _val0 = vdupq_n_f32(sptr[j]);
+                        const float32x4_t _scale_index = vdupq_n_f32(scale_index);
+                        const uint32x4_t _signMask = vld1q_u32(bufSignMask);
+
+                        for( ; k <= maxk - 4 ; k += 4 )
+                        {
+                            float32x4_t _sw  = vld1q_f32(space_weight + k);
+                            float CV_DECL_ALIGNED(16) _data[] = {sptr[j + space_ofs[k]],   sptr[j + space_ofs[k+1]],
+                                                                 sptr[j + space_ofs[k+2]], sptr[j + space_ofs[k+3]],};
+                            float32x4_t _val = vld1q_f32(_data);
+                            float32x4_t _alpha = vsubq_f32(_val, _val0);
+                            _alpha = vreinterpretq_f32_u32(vbicq_u32(vreinterpretq_u32_f32(_alpha), _signMask));
+                            _alpha = vmulq_f32(_alpha, _scale_index);
+                            int32x4_t _idx = vcvtq_s32_f32(_alpha);
+                            vst1q_s32(idxBuf, _idx);
+                            _alpha = vsubq_f32(_alpha, vcvtq_f32_s32(_idx));
+
+                            bufSum32[0] = expLUT[idxBuf[0]];
+                            bufSum32[1] = expLUT[idxBuf[1]];
+                            bufSum32[2] = expLUT[idxBuf[2]];
+                            bufSum32[3] = expLUT[idxBuf[3]];
+                            float32x4_t _explut = vld1q_f32(bufSum32);
+                            bufSum32[0] = expLUT[idxBuf[0]+1];
+                            bufSum32[1] = expLUT[idxBuf[1]+1];
+                            bufSum32[2] = expLUT[idxBuf[2]+1];
+                            bufSum32[3] = expLUT[idxBuf[3]+1];
+                            float32x4_t _explut1 = vld1q_f32(bufSum32);
+
+                            float32x4_t _w = vmulq_f32(_sw, vaddq_f32(_explut, vmulq_f32(_alpha, vsubq_f32(_explut1, _explut))));
+                            _val = vmulq_f32(_w, _val);
+
+                            float32x2_t _wval = vpadd_f32(vpadd_f32(vget_low_f32(_w),vget_high_f32(_w)), vpadd_f32(vget_low_f32(_val), vget_high_f32(_val)));
+                            psum = vadd_f32(_wval, psum);
+                        }
+                        sum = vget_lane_f32(psum, 1);
+                        wsum = vget_lane_f32(psum, 0);
                     }
                     #endif
 
@@ -2070,7 +4044,7 @@ public:
             }
             else
             {
-                assert( cn == 3 );
+                CV_Assert( cn == 3 );
                 for( j = 0; j < size.width*3; j += 3 )
                 {
                     float sum_b = 0, sum_g = 0, sum_r = 0, wsum = 0;
@@ -2079,6 +4053,7 @@ public:
                     #if  CV_SSE3
                     if( haveSSE3 )
                     {
+                        __m128 sum = _mm_setzero_ps();
                         const __m128 _b0 = _mm_set1_ps(b0);
                         const __m128 _g0 = _mm_set1_ps(g0);
                         const __m128 _r0 = _mm_set1_ps(r0);
@@ -2089,14 +4064,16 @@ public:
                         {
                             __m128 _sw = _mm_loadu_ps(space_weight + k);
 
-                            const float* sptr_k  = sptr + j + space_ofs[k];
-                            const float* sptr_k1 = sptr + j + space_ofs[k+1];
-                            const float* sptr_k2 = sptr + j + space_ofs[k+2];
-                            const float* sptr_k3 = sptr + j + space_ofs[k+3];
+                            const float* const sptr_k0 = sptr + j + space_ofs[k];
+                            const float* const sptr_k1 = sptr + j + space_ofs[k+1];
+                            const float* const sptr_k2 = sptr + j + space_ofs[k+2];
+                            const float* const sptr_k3 = sptr + j + space_ofs[k+3];
 
-                            __m128 _b = _mm_set_ps(sptr_k3[0], sptr_k2[0], sptr_k1[0], sptr_k[0]);
-                            __m128 _g = _mm_set_ps(sptr_k3[1], sptr_k2[1], sptr_k1[1], sptr_k[1]);
-                            __m128 _r = _mm_set_ps(sptr_k3[2], sptr_k2[2], sptr_k1[2], sptr_k[2]);
+                            __m128 _b = _mm_loadu_ps(sptr_k0);
+                            __m128 _g = _mm_loadu_ps(sptr_k1);
+                            __m128 _r = _mm_loadu_ps(sptr_k2);
+                            __m128 _z = _mm_loadu_ps(sptr_k3);
+                            _MM_TRANSPOSE4_PS(_b, _g, _r, _z);
 
                             __m128 _bt = _mm_andnot_ps(_signMask,_mm_sub_ps(_b,_b0));
                             __m128 _gt = _mm_andnot_ps(_signMask,_mm_sub_ps(_g,_g0));
@@ -2121,14 +4098,79 @@ public:
                              _g = _mm_hadd_ps(_g, _r);
 
                              _w = _mm_hadd_ps(_w, _g);
-                             _mm_store_ps(bufSum32, _w);
-
-                             wsum  += bufSum32[0];
-                             sum_b += bufSum32[1];
-                             sum_g += bufSum32[2];
-                             sum_r += bufSum32[3];
+                             sum = _mm_add_ps(sum, _w);
                         }
+                        _mm_store_ps(bufSum32, sum);
+                        wsum  = bufSum32[0];
+                        sum_b = bufSum32[1];
+                        sum_g = bufSum32[2];
+                        sum_r = bufSum32[3];
+                    }
+                    #elif CV_NEON
+                    if( haveNEON )
+                    {
+                        float32x4_t sum = vdupq_n_f32(0.0f);
+                        const float32x4_t _b0 = vdupq_n_f32(b0);
+                        const float32x4_t _g0 = vdupq_n_f32(g0);
+                        const float32x4_t _r0 = vdupq_n_f32(r0);
+                        const float32x4_t _scale_index = vdupq_n_f32(scale_index);
+                        const uint32x4_t _signMask = vld1q_u32(bufSignMask);
 
+                        for( ; k <= maxk-4; k += 4 )
+                        {
+                            float32x4_t _sw = vld1q_f32(space_weight + k);
+
+                            const float* const sptr_k0 = sptr + j + space_ofs[k];
+                            const float* const sptr_k1 = sptr + j + space_ofs[k+1];
+                            const float* const sptr_k2 = sptr + j + space_ofs[k+2];
+                            const float* const sptr_k3 = sptr + j + space_ofs[k+3];
+
+                            float32x4_t _v0 = vld1q_f32(sptr_k0);
+                            float32x4_t _v1 = vld1q_f32(sptr_k1);
+                            float32x4_t _v2 = vld1q_f32(sptr_k2);
+                            float32x4_t _v3 = vld1q_f32(sptr_k3);
+
+                            float32x4x2_t v01 = vtrnq_f32(_v0, _v1);
+                            float32x4x2_t v23 = vtrnq_f32(_v2, _v3);
+                            float32x4_t _b = vcombine_f32(vget_low_f32(v01.val[0]), vget_low_f32(v23.val[0]));
+                            float32x4_t _g = vcombine_f32(vget_low_f32(v01.val[1]), vget_low_f32(v23.val[1]));
+                            float32x4_t _r = vcombine_f32(vget_high_f32(v01.val[0]), vget_high_f32(v23.val[0]));
+
+                            float32x4_t _bt = vreinterpretq_f32_u32(vbicq_u32(vreinterpretq_u32_f32(vsubq_f32(_b, _b0)), _signMask));
+                            float32x4_t _gt = vreinterpretq_f32_u32(vbicq_u32(vreinterpretq_u32_f32(vsubq_f32(_g, _g0)), _signMask));
+                            float32x4_t _rt = vreinterpretq_f32_u32(vbicq_u32(vreinterpretq_u32_f32(vsubq_f32(_r, _r0)), _signMask));
+                            float32x4_t _alpha = vmulq_f32(_scale_index, vaddq_f32(_bt, vaddq_f32(_gt, _rt)));
+
+                            int32x4_t _idx = vcvtq_s32_f32(_alpha);
+                            vst1q_s32((int*)idxBuf, _idx);
+                            bufSum32[0] = expLUT[idxBuf[0]];
+                            bufSum32[1] = expLUT[idxBuf[1]];
+                            bufSum32[2] = expLUT[idxBuf[2]];
+                            bufSum32[3] = expLUT[idxBuf[3]];
+                            float32x4_t _explut = vld1q_f32(bufSum32);
+                            bufSum32[0] = expLUT[idxBuf[0]+1];
+                            bufSum32[1] = expLUT[idxBuf[1]+1];
+                            bufSum32[2] = expLUT[idxBuf[2]+1];
+                            bufSum32[3] = expLUT[idxBuf[3]+1];
+                            float32x4_t _explut1 = vld1q_f32(bufSum32);
+
+                            float32x4_t _w = vmulq_f32(_sw, vaddq_f32(_explut, vmulq_f32(_alpha, vsubq_f32(_explut1, _explut))));
+
+                            _b = vmulq_f32(_b, _w);
+                            _g = vmulq_f32(_g, _w);
+                            _r = vmulq_f32(_r, _w);
+
+                            float32x2_t _wb = vpadd_f32(vpadd_f32(vget_low_f32(_w),vget_high_f32(_w)), vpadd_f32(vget_low_f32(_b), vget_high_f32(_b)));
+                            float32x2_t _gr = vpadd_f32(vpadd_f32(vget_low_f32(_g),vget_high_f32(_g)), vpadd_f32(vget_low_f32(_r), vget_high_f32(_r)));
+
+                            _w = vcombine_f32(_wb, _gr);
+                            sum = vaddq_f32(sum, _w);
+                        }
+                        vst1q_f32(bufSum32, sum);
+                        wsum  = bufSum32[0];
+                        sum_b = bufSum32[1];
+                        sum_g = bufSum32[2];
+                        sum_r = bufSum32[3];
                     }
                     #endif
 
@@ -2176,9 +4218,7 @@ bilateralFilter_32f( const Mat& src, Mat& dst, int d,
     float len, scale_index;
     Size size = src.size();
 
-    CV_Assert( (src.type() == CV_32FC1 || src.type() == CV_32FC3) &&
-        src.type() == dst.type() && src.size() == dst.size() &&
-        src.data != dst.data );
+    CV_Assert( (src.type() == CV_32FC1 || src.type() == CV_32FC3) && src.data != dst.data );
 
     if( sigma_color <= 0 )
         sigma_color = 1;
@@ -2210,15 +4250,15 @@ bilateralFilter_32f( const Mat& src, Mat& dst, int d,
     patchNaNs( temp, insteadNaNValue ); // this replacement of NaNs makes the assumption that depth values are nonnegative
                                         // TODO: make insteadNaNValue avalible in the outside function interface to control the cases breaking the assumption
     // allocate lookup tables
-    vector<float> _space_weight(d*d);
-    vector<int> _space_ofs(d*d);
+    std::vector<float> _space_weight(d*d);
+    std::vector<int> _space_ofs(d*d);
     float* space_weight = &_space_weight[0];
     int* space_ofs = &_space_ofs[0];
 
     // assign a length which is slightly more than needed
     len = (float)(maxValSrc - minValSrc) * cn;
     kExpNumBins = kExpNumBinsPerChannel * cn;
-    vector<float> _expLUT(kExpNumBins+2);
+    std::vector<float> _expLUT(kExpNumBins+2);
     float* expLUT = &_expLUT[0];
 
     scale_index = kExpNumBins/len;
@@ -2259,9 +4299,14 @@ void cv::bilateralFilter( InputArray _src, OutputArray _dst, int d,
                       double sigmaColor, double sigmaSpace,
                       int borderType )
 {
-    Mat src = _src.getMat();
-    _dst.create( src.size(), src.type() );
-    Mat dst = _dst.getMat();
+    CV_INSTRUMENT_REGION()
+
+    _dst.create( _src.size(), _src.type() );
+
+    CV_OCL_RUN(_src.dims() <= 2 && _dst.isUMat(),
+               ocl_bilateralFilter_8u(_src, _dst, d, sigmaColor, sigmaSpace, borderType))
+
+    Mat src = _src.getMat(), dst = _dst.getMat();
 
     if( src.depth() == CV_8U )
         bilateralFilter_8u( src, dst, d, sigmaColor, sigmaSpace, borderType );
@@ -2270,285 +4315,6 @@ void cv::bilateralFilter( InputArray _src, OutputArray _dst, int d,
     else
         CV_Error( CV_StsUnsupportedFormat,
         "Bilateral filtering is only implemented for 8u and 32f images" );
-}
-
-
-/****************************************************************************************\
-                                  Adaptive Bilateral Filtering
-\****************************************************************************************/
-
-namespace cv
-{
-#ifndef ABF_CALCVAR
-#define ABF_CALCVAR 1
-#endif
-
-#ifndef ABF_FIXED_WEIGHT
-#define ABF_FIXED_WEIGHT 0
-#endif
-
-#ifndef ABF_GAUSSIAN
-#define ABF_GAUSSIAN 1
-#endif
-
-class adaptiveBilateralFilter_8u_Invoker :
-    public ParallelLoopBody
-{
-public:
-    adaptiveBilateralFilter_8u_Invoker(Mat& _dest, const Mat& _temp, Size _ksize, double _sigma_space, double _maxSigmaColor, Point _anchor) :
-        temp(&_temp), dest(&_dest), ksize(_ksize), sigma_space(_sigma_space), maxSigma_Color(_maxSigmaColor), anchor(_anchor)
-    {
-        if( sigma_space <= 0 )
-            sigma_space = 1;
-        CV_Assert((ksize.width & 1) && (ksize.height & 1));
-        space_weight.resize(ksize.width * ksize.height);
-        double sigma2 = sigma_space * sigma_space;
-        int idx = 0;
-        int w = ksize.width / 2;
-        int h = ksize.height / 2;
-        for(int y=-h; y<=h; y++)
-            for(int x=-w; x<=w; x++)
-        {
-#if ABF_GAUSSIAN
-            space_weight[idx++] = (float)exp ( -0.5*(x * x + y * y)/sigma2);
-#else
-            space_weight[idx++] = (float)(sigma2 / (sigma2 + x * x + y * y));
-#endif
-        }
-    }
-    virtual void operator()(const Range& range) const
-    {
-        int cn = dest->channels();
-        int anX = anchor.x;
-
-        const uchar *tptr;
-
-        for(int i = range.start;i < range.end; i++)
-        {
-            int startY = i;
-            if(cn == 1)
-            {
-                float var;
-                int currVal;
-                int sumVal = 0;
-                int sumValSqr = 0;
-                int currValCenter;
-                int currWRTCenter;
-                float weight;
-                float totalWeight = 0.;
-                float tmpSum = 0.;
-
-                for(int j = 0;j < dest->cols *cn; j+=cn)
-                {
-                    sumVal = 0;
-                    sumValSqr= 0;
-                    totalWeight = 0.;
-                    tmpSum = 0.;
-
-                    // Top row: don't sum the very last element
-                    int startLMJ = 0;
-                    int endLMJ  = ksize.width  - 1;
-                    int howManyAll = (anX *2 +1)*(ksize.width );
-#if ABF_CALCVAR
-                    for(int x = startLMJ; x< endLMJ; x++)
-                    {
-                        tptr = temp->ptr(startY + x) +j;
-                        for(int y=-anX; y<=anX; y++)
-                        {
-                            currVal = tptr[cn*(y+anX)];
-                            sumVal += currVal;
-                            sumValSqr += (currVal *currVal);
-                        }
-                    }
-                    var = ( (sumValSqr * howManyAll)- sumVal * sumVal )  /  ( (float)(howManyAll*howManyAll));
-
-                    if(var < 0.01)
-                        var = 0.01f;
-                    else if(var > (float)(maxSigma_Color*maxSigma_Color) )
-                        var =  (float)(maxSigma_Color*maxSigma_Color) ;
-
-#else
-                    var = maxSigmaColor*maxSigmaColor;
-#endif
-                    startLMJ = 0;
-                    endLMJ = ksize.width;
-                    tptr = temp->ptr(startY + (startLMJ+ endLMJ)/2);
-                    currValCenter =tptr[j+cn*anX];
-                    for(int x = startLMJ; x< endLMJ; x++)
-                    {
-                        tptr = temp->ptr(startY + x) +j;
-                        for(int y=-anX; y<=anX; y++)
-                        {
-#if ABF_FIXED_WEIGHT
-                            weight = 1.0;
-#else
-                            currVal = tptr[cn*(y+anX)];
-                            currWRTCenter = currVal - currValCenter;
-
-#if ABF_GAUSSIAN
-                            weight = exp ( -0.5f * currWRTCenter * currWRTCenter/var ) * space_weight[x*ksize.width+y+anX];
-#else
-                            weight = var / ( var + (currWRTCenter * currWRTCenter) ) * space_weight[x*ksize.width+y+anX];
-#endif
-
-#endif
-                            tmpSum += ((float)tptr[cn*(y+anX)] * weight);
-                            totalWeight += weight;
-                        }
-                    }
-                    tmpSum /= totalWeight;
-
-                   dest->at<uchar>(startY ,j)= static_cast<uchar>(tmpSum);
-                }
-            }
-            else
-            {
-                assert(cn == 3);
-                float var_b, var_g, var_r;
-                int currVal_b, currVal_g, currVal_r;
-                int sumVal_b= 0, sumVal_g= 0, sumVal_r= 0;
-                int sumValSqr_b= 0, sumValSqr_g= 0, sumValSqr_r= 0;
-                int currValCenter_b= 0, currValCenter_g= 0, currValCenter_r= 0;
-                int currWRTCenter_b, currWRTCenter_g, currWRTCenter_r;
-                float weight_b, weight_g, weight_r;
-                float totalWeight_b= 0., totalWeight_g= 0., totalWeight_r= 0.;
-                float tmpSum_b = 0., tmpSum_g= 0., tmpSum_r = 0.;
-
-                for(int j = 0;j < dest->cols *cn; j+=cn)
-                {
-                    sumVal_b= 0, sumVal_g= 0, sumVal_r= 0;
-                    sumValSqr_b= 0, sumValSqr_g= 0, sumValSqr_r= 0;
-                    totalWeight_b= 0., totalWeight_g= 0., totalWeight_r= 0.;
-                    tmpSum_b = 0., tmpSum_g= 0., tmpSum_r = 0.;
-
-                    // Top row: don't sum the very last element
-                    int startLMJ = 0;
-                    int endLMJ  = ksize.width - 1;
-                    int howManyAll = (anX *2 +1)*(ksize.width);
-#if ABF_CALCVAR
-                    float max_var = (float)( maxSigma_Color*maxSigma_Color);
-                    for(int x = startLMJ; x< endLMJ; x++)
-                    {
-                        tptr = temp->ptr(startY + x) +j;
-                        for(int y=-anX; y<=anX; y++)
-                        {
-                            currVal_b = tptr[cn*(y+anX)], currVal_g = tptr[cn*(y+anX)+1], currVal_r =tptr[cn*(y+anX)+2];
-                            sumVal_b += currVal_b;
-                            sumVal_g += currVal_g;
-                            sumVal_r += currVal_r;
-                            sumValSqr_b += (currVal_b *currVal_b);
-                            sumValSqr_g += (currVal_g *currVal_g);
-                            sumValSqr_r += (currVal_r *currVal_r);
-                        }
-                    }
-                    var_b =  ( (sumValSqr_b * howManyAll)- sumVal_b * sumVal_b )  /  ( (float)(howManyAll*howManyAll));
-                    var_g =  ( (sumValSqr_g * howManyAll)- sumVal_g * sumVal_g )  /  ( (float)(howManyAll*howManyAll));
-                    var_r =  ( (sumValSqr_r * howManyAll)- sumVal_r * sumVal_r )  /  ( (float)(howManyAll*howManyAll));
-
-                    if(var_b < 0.01)
-                        var_b = 0.01f;
-                    else if(var_b > max_var )
-                        var_b =  (float)(max_var) ;
-
-                    if(var_g < 0.01)
-                        var_g = 0.01f;
-                    else if(var_g > max_var )
-                        var_g =  (float)(max_var) ;
-
-                    if(var_r < 0.01)
-                        var_r = 0.01f;
-                    else if(var_r > max_var )
-                        var_r =  (float)(max_var) ;
-
-#else
-                    var_b = maxSigma_Color*maxSigma_Color; var_g = maxSigma_Color*maxSigma_Color; var_r = maxSigma_Color*maxSigma_Color;
-#endif
-                    startLMJ = 0;
-                    endLMJ = ksize.width;
-                    tptr = temp->ptr(startY + (startLMJ+ endLMJ)/2) + j;
-                    currValCenter_b =tptr[cn*anX], currValCenter_g =tptr[cn*anX+1], currValCenter_r =tptr[cn*anX+2];
-                    for(int x = startLMJ; x< endLMJ; x++)
-                    {
-                        tptr = temp->ptr(startY + x) +j;
-                        for(int y=-anX; y<=anX; y++)
-                        {
-#if ABF_FIXED_WEIGHT
-                            weight_b = 1.0;
-                            weight_g = 1.0;
-                            weight_r = 1.0;
-#else
-                            currVal_b = tptr[cn*(y+anX)];currVal_g=tptr[cn*(y+anX)+1];currVal_r=tptr[cn*(y+anX)+2];
-                            currWRTCenter_b = currVal_b - currValCenter_b;
-                            currWRTCenter_g = currVal_g - currValCenter_g;
-                            currWRTCenter_r = currVal_r - currValCenter_r;
-
-                            float cur_spw = space_weight[x*ksize.width+y+anX];
-
-#if ABF_GAUSSIAN
-                            weight_b = exp( -0.5f * currWRTCenter_b * currWRTCenter_b/ var_b ) * cur_spw;
-                            weight_g = exp( -0.5f * currWRTCenter_g * currWRTCenter_g/ var_g ) * cur_spw;
-                            weight_r = exp( -0.5f * currWRTCenter_r * currWRTCenter_r/ var_r ) * cur_spw;
-#else
-                            weight_b = var_b / ( var_b + (currWRTCenter_b * currWRTCenter_b) ) * cur_spw;
-                            weight_g = var_g / ( var_g + (currWRTCenter_g * currWRTCenter_g) ) * cur_spw;
-                            weight_r = var_r / ( var_r + (currWRTCenter_r * currWRTCenter_r) ) * cur_spw;
-#endif
-#endif
-                            tmpSum_b += ((float)tptr[cn*(y+anX)]   * weight_b);
-                            tmpSum_g += ((float)tptr[cn*(y+anX)+1] * weight_g);
-                            tmpSum_r += ((float)tptr[cn*(y+anX)+2] * weight_r);
-                            totalWeight_b += weight_b, totalWeight_g += weight_g, totalWeight_r += weight_r;
-                        }
-                    }
-                    tmpSum_b /= totalWeight_b;
-                    tmpSum_g /= totalWeight_g;
-                    tmpSum_r /= totalWeight_r;
-
-                    dest->at<uchar>(startY,j  )= static_cast<uchar>(tmpSum_b);
-                    dest->at<uchar>(startY,j+1)= static_cast<uchar>(tmpSum_g);
-                    dest->at<uchar>(startY,j+2)= static_cast<uchar>(tmpSum_r);
-                }
-            }
-        }
-    }
-private:
-    const Mat *temp;
-    Mat *dest;
-    Size ksize;
-    double sigma_space;
-    double maxSigma_Color;
-    Point anchor;
-    vector<float> space_weight;
-};
-static void adaptiveBilateralFilter_8u( const Mat& src, Mat& dst, Size ksize, double sigmaSpace, double maxSigmaColor, Point anchor, int borderType )
-{
-    Size size = src.size();
-
-    CV_Assert( (src.type() == CV_8UC1 || src.type() == CV_8UC3) &&
-              src.type() == dst.type() && src.size() == dst.size() &&
-              src.data != dst.data );
-    Mat temp;
-    copyMakeBorder(src, temp, anchor.x, anchor.y, anchor.x, anchor.y, borderType);
-
-    adaptiveBilateralFilter_8u_Invoker body(dst, temp, ksize, sigmaSpace, maxSigmaColor, anchor);
-    parallel_for_(Range(0, size.height), body, dst.total()/(double)(1<<16));
-}
-}
-void cv::adaptiveBilateralFilter( InputArray _src, OutputArray _dst, Size ksize,
-                                  double sigmaSpace, double maxSigmaColor, Point anchor, int borderType )
-{
-    Mat src = _src.getMat();
-    _dst.create(src.size(), src.type());
-    Mat dst = _dst.getMat();
-
-    CV_Assert(src.type() == CV_8UC1 || src.type() == CV_8UC3);
-
-    anchor = normalizeAnchor(anchor,ksize);
-    if( src.depth() == CV_8U )
-        adaptiveBilateralFilter_8u( src, dst, ksize, sigmaSpace, maxSigmaColor, anchor, borderType );
-    else
-        CV_Error( CV_StsUnsupportedFormat,
-        "Adaptive Bilateral filtering is only implemented for 8u images" );
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////

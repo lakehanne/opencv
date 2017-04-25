@@ -2,9 +2,10 @@
 // It loads several images sequentially and tries to find squares in
 // each image
 
-#include "opencv2/core/core.hpp"
-#include "opencv2/imgproc/imgproc.hpp"
-#include "opencv2/highgui/highgui.hpp"
+#include "opencv2/core.hpp"
+#include "opencv2/imgproc.hpp"
+#include "opencv2/imgcodecs.hpp"
+#include "opencv2/highgui.hpp"
 
 #include <iostream>
 #include <math.h>
@@ -22,8 +23,8 @@ static void help()
     "Returns sequence of squares detected on the image.\n"
     "the sequence is stored in the specified memory storage\n"
     "Call:\n"
-    "./squares\n"
-    "Using OpenCV version %s\n" << CV_VERSION << "\n" << endl;
+    "./squares [file_name (optional)]\n"
+    "Using OpenCV version " << CV_VERSION << "\n" << endl;
 }
 
 
@@ -83,7 +84,7 @@ static void findSquares( const Mat& image, vector<vector<Point> >& squares )
             }
 
             // find contours and store them all as a list
-            findContours(gray, contours, CV_RETR_LIST, CV_CHAIN_APPROX_SIMPLE);
+            findContours(gray, contours, RETR_LIST, CHAIN_APPROX_SIMPLE);
 
             vector<Point> approx;
 
@@ -132,18 +133,25 @@ static void drawSquares( Mat& image, const vector<vector<Point> >& squares )
     {
         const Point* p = &squares[i][0];
         int n = (int)squares[i].size();
-        polylines(image, &p, &n, 1, true, Scalar(0,255,0), 3, CV_AA);
+        polylines(image, &p, &n, 1, true, Scalar(0,255,0), 3, LINE_AA);
     }
 
     imshow(wndname, image);
 }
 
 
-int main(int /*argc*/, char** /*argv*/)
+int main(int argc, char** argv)
 {
-    static const char* names[] = { "pic1.png", "pic2.png", "pic3.png",
-        "pic4.png", "pic5.png", "pic6.png", 0 };
+    static const char* names[] = { "../data/pic1.png", "../data/pic2.png", "../data/pic3.png",
+        "../data/pic4.png", "../data/pic5.png", "../data/pic6.png", 0 };
     help();
+
+    if( argc > 1)
+    {
+     names[0] =  argv[1];
+     names[1] =  "0";
+    }
+
     namedWindow( wndname, 1 );
     vector<vector<Point> > squares;
 
@@ -159,8 +167,8 @@ int main(int /*argc*/, char** /*argv*/)
         findSquares(image, squares);
         drawSquares(image, squares);
 
-        int c = waitKey();
-        if( (char)c == 27 )
+        char c = (char)waitKey();
+        if( c == 27 )
             break;
     }
 

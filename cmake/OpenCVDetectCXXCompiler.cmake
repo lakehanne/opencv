@@ -13,9 +13,8 @@ if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
   set(CMAKE_COMPILER_IS_GNUCC 1)
   set(CMAKE_COMPILER_IS_CLANGCC 1)
 endif()
-
-if((CMAKE_COMPILER_IS_CLANGCXX OR CMAKE_COMPILER_IS_CLANGCC) AND NOT CMAKE_GENERATOR MATCHES "Xcode")
-  set(ENABLE_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
+if("${CMAKE_CXX_COMPILER};${CMAKE_C_COMPILER}" MATCHES "ccache")
+  set(CMAKE_COMPILER_IS_CCACHE 1)
 endif()
 
 # ----------------------------------------------------------------------------
@@ -42,7 +41,7 @@ if(UNIX)
   endif()
 endif()
 
-if(MSVC AND CMAKE_C_COMPILER MATCHES "icc")
+if(MSVC AND CMAKE_C_COMPILER MATCHES "icc|icl")
   set(CV_ICC   __INTEL_COMPILER_FOR_WINDOWS)
 endif()
 
@@ -73,17 +72,27 @@ elseif(CMAKE_COMPILER_IS_GNUCXX)
                 OUTPUT_STRIP_TRAILING_WHITESPACE)
 
   # Typical output in CMAKE_OPENCV_GCC_VERSION_FULL: "c+//0 (whatever) 4.2.3 (...)"
-  # Look for the version number
+  # Look for the version number, major.minor.build
   string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" CMAKE_GCC_REGEX_VERSION "${CMAKE_OPENCV_GCC_VERSION_FULL}")
-  if(NOT CMAKE_GCC_REGEX_VERSION)
+  if(NOT CMAKE_GCC_REGEX_VERSION)#major.minor
     string(REGEX MATCH "[0-9]+\\.[0-9]+" CMAKE_GCC_REGEX_VERSION "${CMAKE_OPENCV_GCC_VERSION_FULL}")
   endif()
 
-  # Split the three parts:
-  string(REGEX MATCHALL "[0-9]+" CMAKE_OPENCV_GCC_VERSIONS "${CMAKE_GCC_REGEX_VERSION}")
+  if(CMAKE_GCC_REGEX_VERSION)
+    # Split the parts:
+    string(REGEX MATCHALL "[0-9]+" CMAKE_OPENCV_GCC_VERSIONS "${CMAKE_GCC_REGEX_VERSION}")
 
-  list(GET CMAKE_OPENCV_GCC_VERSIONS 0 CMAKE_OPENCV_GCC_VERSION_MAJOR)
-  list(GET CMAKE_OPENCV_GCC_VERSIONS 1 CMAKE_OPENCV_GCC_VERSION_MINOR)
+    list(GET CMAKE_OPENCV_GCC_VERSIONS 0 CMAKE_OPENCV_GCC_VERSION_MAJOR)
+    list(GET CMAKE_OPENCV_GCC_VERSIONS 1 CMAKE_OPENCV_GCC_VERSION_MINOR)
+  else()#compiler returned just the major version number
+    string(REGEX MATCH "[0-9]+" CMAKE_GCC_REGEX_VERSION "${CMAKE_OPENCV_GCC_VERSION_FULL}")
+    if(NOT CMAKE_GCC_REGEX_VERSION)#compiler did not return anything reasonable
+      set(CMAKE_GCC_REGEX_VERSION "0")
+      message(WARNING "GCC version not detected!")
+    endif()
+    set(CMAKE_OPENCV_GCC_VERSION_MAJOR ${CMAKE_GCC_REGEX_VERSION})
+    set(CMAKE_OPENCV_GCC_VERSION_MINOR 0)
+  endif()
 
   set(CMAKE_OPENCV_GCC_VERSION ${CMAKE_OPENCV_GCC_VERSION_MAJOR}${CMAKE_OPENCV_GCC_VERSION_MINOR})
   math(EXPR CMAKE_OPENCV_GCC_VERSION_NUM "${CMAKE_OPENCV_GCC_VERSION_MAJOR}*100 + ${CMAKE_OPENCV_GCC_VERSION_MINOR}")
@@ -107,12 +116,18 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64.*|x86_64.*|AMD64.*")
   set(X86_64 1)
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "i686.*|i386.*|x86.*|amd64.*|AMD64.*")
   set(X86 1)
-elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "arm.*|ARM.*")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm.*|ARM.*)")
   set(ARM 1)
-elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64.*|AARCH64.*")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64.*|AARCH64.*)")
   set(AARCH64 1)
 endif()
 
+# Workaround for 32-bit operating systems on 64-bit x86_64 processor
+if(X86_64 AND CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT FORCE_X86_64)
+  message(STATUS "sizeof(void) = 4 on x86 / x86_64 processor. Assume 32-bit compilation mode (X86=1)")
+  unset(X86_64)
+  set(X86 1)
+endif()
 
 # Similar code exists in OpenCVConfig.cmake
 if(NOT DEFINED OpenCV_STATIC)
@@ -127,6 +142,9 @@ endif()
 if(MSVC)
   if(CMAKE_CL_64)
     set(OpenCV_ARCH x64)
+  elseif((CMAKE_GENERATOR MATCHES "ARM") OR ("${arch_hint}" STREQUAL "ARM") OR (CMAKE_VS_EFFECTIVE_PLATFORMS MATCHES "ARM|arm"))
+    # see Modules/CmakeGenericSystem.cmake
+    set(OpenCV_ARCH ARM)
   else()
     set(OpenCV_ARCH x86)
   endif()
@@ -142,6 +160,8 @@ if(MSVC)
     set(OpenCV_RUNTIME vc12)
   elseif(MSVC_VERSION EQUAL 1900)
     set(OpenCV_RUNTIME vc14)
+  elseif(MSVC_VERSION EQUAL 1910)
+    set(OpenCV_RUNTIME vc15)
   endif()
 elseif(MINGW)
   set(OpenCV_RUNTIME mingw)
@@ -151,4 +171,14 @@ elseif(MINGW)
   else()
     set(OpenCV_ARCH x86)
   endif()
+endif()
+
+# Fix handling of duplicated files in the same static library:
+# https://public.kitware.com/Bug/view.php?id=14874
+if(CMAKE_VERSION VERSION_LESS "3.1")
+  foreach(var CMAKE_C_ARCHIVE_APPEND CMAKE_CXX_ARCHIVE_APPEND)
+    if(${var} MATCHES "^<CMAKE_AR> r")
+      string(REPLACE "<CMAKE_AR> r" "<CMAKE_AR> q" ${var} "${${var}}")
+    endif()
+  endforeach()
 endif()

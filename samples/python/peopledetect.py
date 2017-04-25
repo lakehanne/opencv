@@ -1,56 +1,71 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
-import sys
-from cv import *
+'''
+example to detect upright people in images using HOG features
+
+Usage:
+    peopledetect.py <image_names>
+
+Press any key to continue, ESC to stop.
+'''
+
+# Python 2/3 compatibility
+from __future__ import print_function
+
+import numpy as np
+import cv2
+
 
 def inside(r, q):
-    (rx, ry), (rw, rh) = r
-    (qx, qy), (qw, qh) = q
+    rx, ry, rw, rh = r
+    qx, qy, qw, qh = q
     return rx > qx and ry > qy and rx + rw < qx + qw and ry + rh < qy + qh
 
-try:
-    img = LoadImage(sys.argv[1])
-except:
-    try:
-        f = open(sys.argv[1], "rt")
-    except:
-        print "cannot read " + sys.argv[1]
-        sys.exit(-1)
-    imglist = list(f.readlines())
-else:
-    imglist = [sys.argv[1]]
 
-NamedWindow("people detection demo", 1)
-storage = CreateMemStorage(0)
+def draw_detections(img, rects, thickness = 1):
+    for x, y, w, h in rects:
+        # the HOG detector returns slightly larger rectangles than the real objects.
+        # so we slightly shrink the rectangles to get a nicer output.
+        pad_w, pad_h = int(0.15*w), int(0.05*h)
+        cv2.rectangle(img, (x+pad_w, y+pad_h), (x+w-pad_w, y+h-pad_h), (0, 255, 0), thickness)
 
-for name in imglist:
-    n = name.strip()
-    print n
-    try:
-        img = LoadImage(n)
-    except:
-        continue
 
-    #ClearMemStorage(storage)
-    found = list(HOGDetectMultiScale(img, storage, win_stride=(8,8),
-        padding=(32,32), scale=1.05, group_threshold=2))
-    found_filtered = []
-    for r in found:
-        insidef = False
-        for q in found:
-            if inside(r, q):
-                insidef = True
-                break
-        if not insidef:
-            found_filtered.append(r)
-    for r in found_filtered:
-        (rx, ry), (rw, rh) = r
-        tl = (rx + int(rw*0.1), ry + int(rh*0.07))
-        br = (rx + int(rw*0.9), ry + int(rh*0.87))
-        Rectangle(img, tl, br, (0, 255, 0), 3)
+if __name__ == '__main__':
+    import sys
+    from glob import glob
+    import itertools as it
 
-    ShowImage("people detection demo", img)
-    c = WaitKey(0)
-    if c == ord('q'):
-        break
-cv.DestroyAllWindows()
+    print(__doc__)
+
+    hog = cv2.HOGDescriptor()
+    hog.setSVMDetector( cv2.HOGDescriptor_getDefaultPeopleDetector() )
+
+    default = ['../data/basketball2.png '] if len(sys.argv[1:]) == 0 else []
+
+    for fn in it.chain(*map(glob, default + sys.argv[1:])):
+        print(fn, ' - ',)
+        try:
+            img = cv2.imread(fn)
+            if img is None:
+                print('Failed to load image file:', fn)
+                continue
+        except:
+            print('loading error')
+            continue
+
+        found, w = hog.detectMultiScale(img, winStride=(8,8), padding=(32,32), scale=1.05)
+        found_filtered = []
+        for ri, r in enumerate(found):
+            for qi, q in enumerate(found):
+                if ri != qi and inside(r, q):
+                    break
+            else:
+                found_filtered.append(r)
+        draw_detections(img, found)
+        draw_detections(img, found_filtered, 3)
+        print('%d (%d) found' % (len(found_filtered), len(found)))
+        cv2.imshow('img', img)
+        ch = cv2.waitKey()
+        if ch == 27:
+            break
+    cv2.destroyAllWindows()

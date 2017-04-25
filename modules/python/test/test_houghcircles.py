@@ -39,13 +39,13 @@ class houghcircles_test(NewOpenCVTests):
 
     def test_houghcircles(self):
 
-        fn = "samples/cpp/board.jpg"
+        fn = "samples/data/board.jpg"
 
         src = self.get_sample(fn, 1)
         img = cv2.cvtColor(src, cv2.COLOR_BGR2GRAY)
         img = cv2.medianBlur(img, 5)
 
-        circles = cv2.HoughCircles(img, cv2.cv.CV_HOUGH_GRADIENT, 1, 10, np.array([]), 100, 30, 1, 30)[0]
+        circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT, 1, 10, np.array([]), 100, 30, 1, 30)[0]
 
         testCircles = [[38, 181, 17.6],
         [99.7, 166, 13.12],

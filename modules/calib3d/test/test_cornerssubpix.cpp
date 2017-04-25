@@ -40,9 +40,11 @@
  //M*/
 
 #include "test_precomp.hpp"
+#include "opencv2/imgproc/imgproc_c.h"
 #include <limits>
 #include "test_chessboardgenerator.hpp"
 
+using namespace std;
 using namespace cv;
 
 class CV_ChessboardSubpixelTest : public cvtest::BaseTest
@@ -209,6 +211,7 @@ void CV_ChessboardSubpixelTest::run( int )
 
         progress = update_progress( progress, i-1, runs_count, 0 );
     }
+    ASSERT_NE(0, count);
     sum_dist /= count;
     ts->printf(cvtest::TS::LOG, "Average error after findCornerSubpix: %f\n", sum_dist);
 
@@ -238,5 +241,19 @@ void CV_ChessboardSubpixelTest::generateIntrinsicParams()
 }
 
 TEST(Calib3d_ChessboardSubPixDetector, accuracy) { CV_ChessboardSubpixelTest test; test.safe_run(); }
+
+TEST(Calib3d_CornerSubPix, regression_7204)
+{
+    cv::Mat image(cv::Size(70, 38), CV_8UC1, cv::Scalar::all(0));
+    image(cv::Rect(65, 26, 5, 5)).setTo(cv::Scalar::all(255));
+    image(cv::Rect(55, 31, 8, 1)).setTo(cv::Scalar::all(255));
+    image(cv::Rect(56, 35, 14, 2)).setTo(cv::Scalar::all(255));
+    image(cv::Rect(66, 24, 4, 2)).setTo(cv::Scalar::all(255));
+    image.at<uchar>(24, 69) = 0;
+    std::vector<cv::Point2f> corners;
+    corners.push_back(cv::Point2f(65, 30));
+    cv::cornerSubPix(image, corners, cv::Size(3, 3), cv::Size(-1, -1),
+        cv::TermCriteria(CV_TERMCRIT_EPS + CV_TERMCRIT_ITER, 30, 0.1));
+}
 
 /* End of file. */

@@ -1,60 +1,55 @@
-#! /usr/bin/env python
+#!/usr/bin/env python
 
-print "OpenCV Python version of edge"
+'''
+This sample demonstrates Canny edge detection.
 
+Usage:
+  edge.py [<video source>]
+
+  Trackbars control edge thresholds.
+
+'''
+
+# Python 2/3 compatibility
+from __future__ import print_function
+
+import cv2
+import numpy as np
+
+# relative module
+import video
+
+# built-in module
 import sys
-import urllib2
-import cv2.cv as cv
 
-# some definitions
-win_name = "Edge"
-trackbar_name = "Threshold"
-
-# the callback on the trackbar
-def on_trackbar(position):
-
-    cv.Smooth(gray, edge, cv.CV_BLUR, 3, 3, 0)
-    cv.Not(gray, edge)
-
-    # run the edge dector on gray scale
-    cv.Canny(gray, edge, position, position * 3, 3)
-
-    # reset
-    cv.SetZero(col_edge)
-
-    # copy edge points
-    cv.Copy(im, col_edge, edge)
-
-    # show the im
-    cv.ShowImage(win_name, col_edge)
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1:
-        im = cv.LoadImage( sys.argv[1], cv.CV_LOAD_IMAGE_COLOR)
-    else:
-        url = 'https://raw.github.com/Itseez/opencv/master/samples/c/fruits.jpg'
-        filedata = urllib2.urlopen(url).read()
-        imagefiledata = cv.CreateMatHeader(1, len(filedata), cv.CV_8UC1)
-        cv.SetData(imagefiledata, filedata, len(filedata))
-        im = cv.DecodeImage(imagefiledata, cv.CV_LOAD_IMAGE_COLOR)
+    print(__doc__)
 
-    # create the output im
-    col_edge = cv.CreateImage((im.width, im.height), 8, 3)
+    try:
+        fn = sys.argv[1]
+    except:
+        fn = 0
 
-    # convert to grayscale
-    gray = cv.CreateImage((im.width, im.height), 8, 1)
-    edge = cv.CreateImage((im.width, im.height), 8, 1)
-    cv.CvtColor(im, gray, cv.CV_BGR2GRAY)
+    def nothing(*arg):
+        pass
 
-    # create the window
-    cv.NamedWindow(win_name, cv.CV_WINDOW_AUTOSIZE)
+    cv2.namedWindow('edge')
+    cv2.createTrackbar('thrs1', 'edge', 2000, 5000, nothing)
+    cv2.createTrackbar('thrs2', 'edge', 4000, 5000, nothing)
 
-    # create the trackbar
-    cv.CreateTrackbar(trackbar_name, win_name, 1, 100, on_trackbar)
-
-    # show the im
-    on_trackbar(0)
-
-    # wait a key pressed to end
-    cv.WaitKey(0)
-    cv.DestroyAllWindows()
+    cap = video.create_capture(fn)
+    while True:
+        flag, img = cap.read()
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        thrs1 = cv2.getTrackbarPos('thrs1', 'edge')
+        thrs2 = cv2.getTrackbarPos('thrs2', 'edge')
+        edge = cv2.Canny(gray, thrs1, thrs2, apertureSize=5)
+        vis = img.copy()
+        vis = np.uint8(vis/2.)
+        vis[edge != 0] = (0, 255, 0)
+        cv2.imshow('edge', vis)
+        ch = cv2.waitKey(5)
+        if ch == 27:
+            break
+    cv2.destroyAllWindows()

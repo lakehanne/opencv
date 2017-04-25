@@ -14,7 +14,7 @@ typedef perf::TestBaseWithParam<std::string> orb;
 
 PERF_TEST_P(orb, detect, testing::Values(ORB_IMAGES))
 {
-    String filename = getDataPath(GetParam());
+    string filename = getDataPath(GetParam());
     Mat frame = imread(filename, IMREAD_GRAYSCALE);
 
     if (frame.empty())
@@ -22,18 +22,19 @@ PERF_TEST_P(orb, detect, testing::Values(ORB_IMAGES))
 
     Mat mask;
     declare.in(frame);
-    ORB detector(1500, 1.3f, 1);
+    Ptr<ORB> detector = ORB::create(1500, 1.3f, 1);
     vector<KeyPoint> points;
 
-    TEST_CYCLE() detector(frame, mask, points);
+    TEST_CYCLE() detector->detect(frame, points, mask);
 
-    sort(points.begin(), points.end(), comparators::KeypointGreater());
-    SANITY_CHECK_KEYPOINTS(points, 1e-7, ERROR_RELATIVE);
+    EXPECT_GT(points.size(), 20u);
+
+    SANITY_CHECK_NOTHING();
 }
 
 PERF_TEST_P(orb, extract, testing::Values(ORB_IMAGES))
 {
-    String filename = getDataPath(GetParam());
+    string filename = getDataPath(GetParam());
     Mat frame = imread(filename, IMREAD_GRAYSCALE);
 
     if (frame.empty())
@@ -42,21 +43,23 @@ PERF_TEST_P(orb, extract, testing::Values(ORB_IMAGES))
     Mat mask;
     declare.in(frame);
 
-    ORB detector(1500, 1.3f, 1);
+    Ptr<ORB> detector = ORB::create(1500, 1.3f, 1);
     vector<KeyPoint> points;
-    detector(frame, mask, points);
-    sort(points.begin(), points.end(), comparators::KeypointGreater());
+    detector->detect(frame, points, mask);
+
+    EXPECT_GT(points.size(), 20u);
 
     Mat descriptors;
 
-    TEST_CYCLE() detector(frame, mask, points, descriptors, true);
+    TEST_CYCLE() detector->compute(frame, points, descriptors);
 
-    SANITY_CHECK(descriptors);
+    EXPECT_EQ((size_t)descriptors.rows, points.size());
+    SANITY_CHECK_NOTHING();
 }
 
 PERF_TEST_P(orb, full, testing::Values(ORB_IMAGES))
 {
-    String filename = getDataPath(GetParam());
+    string filename = getDataPath(GetParam());
     Mat frame = imread(filename, IMREAD_GRAYSCALE);
 
     if (frame.empty())
@@ -64,14 +67,14 @@ PERF_TEST_P(orb, full, testing::Values(ORB_IMAGES))
 
     Mat mask;
     declare.in(frame);
-    ORB detector(1500, 1.3f, 1);
+    Ptr<ORB> detector = ORB::create(1500, 1.3f, 1);
 
     vector<KeyPoint> points;
     Mat descriptors;
 
-    TEST_CYCLE() detector(frame, mask, points, descriptors, false);
+    TEST_CYCLE() detector->detectAndCompute(frame, mask, points, descriptors, false);
 
-    perf::sort(points, descriptors);
-    SANITY_CHECK_KEYPOINTS(points, 1e-8, ERROR_RELATIVE);
-    SANITY_CHECK(descriptors);
+    EXPECT_GT(points.size(), 20u);
+    EXPECT_EQ((size_t)descriptors.rows, points.size());
+    SANITY_CHECK_NOTHING();
 }

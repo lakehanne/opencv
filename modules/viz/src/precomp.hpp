@@ -130,6 +130,7 @@
 #include <vtkElevationFilter.h>
 #include <vtkColorTransferFunction.h>
 #include <vtkStreamingDemandDrivenPipeline.h>
+#include <vtkLight.h>
 #include "vtkCallbackCommand.h"
 
 #if !defined(_WIN32) || defined(__CYGWIN__)
@@ -147,9 +148,10 @@
 #include <vtk/vtkImageMatSource.h>
 
 
-#include <opencv2/core/core.hpp>
-#include <opencv2/viz/vizcore.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/viz.hpp>
 #include <opencv2/viz/widget_accessor.hpp>
+#include <opencv2/core/utility.hpp>
 
 
 namespace cv
@@ -280,7 +282,7 @@ namespace cv
                 scalars->SetName("Colors");
                 scalars->SetNumberOfComponents(3);
                 scalars->SetNumberOfTuples((vtkIdType)size);
-                scalars->SetArray(color_data->val, (vtkIdType)(size * 3), 0);
+                scalars->SetArray(color_data->val, (vtkIdType)(size * 3), 0, vtkUnsignedCharArray::VTK_DATA_ARRAY_DELETE);
                 return scalars;
             }
 

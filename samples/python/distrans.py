@@ -1,72 +1,71 @@
-#!/usr/bin/python
-import sys
-import cv2.cv as cv
-import urllib2
+#!/usr/bin/env python
 
-wndname = "Distance transform"
-tbarname = "Threshold"
+'''
+Distance transform sample.
 
-# The output images
-dist = 0
-dist8u1 = 0
-dist8u2 = 0
-dist8u = 0
-dist32s = 0
+Usage:
+  distrans.py [<image>]
 
-gray = 0
-edge = 0
+Keys:
+  ESC   - exit
+  v     - toggle voronoi mode
+'''
 
-# define a trackbar callback
-def on_trackbar(edge_thresh):
+# Python 2/3 compatibility
+from __future__ import print_function
 
-    cv.Threshold(gray, edge, float(edge_thresh), float(edge_thresh), cv.CV_THRESH_BINARY)
-    #Distance transform
-    cv.DistTransform(edge, dist, cv.CV_DIST_L2, cv.CV_DIST_MASK_5)
+import numpy as np
+import cv2
 
-    cv.ConvertScale(dist, dist, 5000.0, 0)
-    cv.Pow(dist, dist, 0.5)
+from common import make_cmap
 
-    cv.ConvertScale(dist, dist32s, 1.0, 0.5)
-    cv.AndS(dist32s, cv.ScalarAll(255), dist32s, None)
-    cv.ConvertScale(dist32s, dist8u1, 1, 0)
-    cv.ConvertScale(dist32s, dist32s, -1, 0)
-    cv.AddS(dist32s, cv.ScalarAll(255), dist32s, None)
-    cv.ConvertScale(dist32s, dist8u2, 1, 0)
-    cv.Merge(dist8u1, dist8u2, dist8u2, None, dist8u)
-    cv.ShowImage(wndname, dist8u)
+if __name__ == '__main__':
+    import sys
+    try:
+        fn = sys.argv[1]
+    except:
+        fn = '../data/fruits.jpg'
+    print(__doc__)
+
+    img = cv2.imread(fn, 0)
+    if img is None:
+        print('Failed to load fn:', fn)
+        sys.exit(1)
+
+    cm = make_cmap('jet')
+    need_update = True
+    voronoi = False
+
+    def update(dummy=None):
+        global need_update
+        need_update = False
+        thrs = cv2.getTrackbarPos('threshold', 'distrans')
+        mark = cv2.Canny(img, thrs, 3*thrs)
+        dist, labels = cv2.distanceTransformWithLabels(~mark, cv2.DIST_L2, 5)
+        if voronoi:
+            vis = cm[np.uint8(labels)]
+        else:
+            vis = cm[np.uint8(dist*2)]
+        vis[mark != 0] = 255
+        cv2.imshow('distrans', vis)
+
+    def invalidate(dummy=None):
+        global need_update
+        need_update = True
+
+    cv2.namedWindow('distrans')
+    cv2.createTrackbar('threshold', 'distrans', 60, 255, invalidate)
+    update()
 
 
-if __name__ == "__main__":
-    edge_thresh = 100
-
-    if len(sys.argv) > 1:
-        gray = cv.LoadImage(sys.argv[1], cv.CV_LOAD_IMAGE_GRAYSCALE)
-    else:
-        url = 'https://raw.github.com/Itseez/opencv/master/samples/c/stuff.jpg'
-        filedata = urllib2.urlopen(url).read()
-        imagefiledata = cv.CreateMatHeader(1, len(filedata), cv.CV_8UC1)
-        cv.SetData(imagefiledata, filedata, len(filedata))
-        gray = cv.DecodeImage(imagefiledata, cv.CV_LOAD_IMAGE_GRAYSCALE)
-
-    # Create the output image
-    dist = cv.CreateImage((gray.width, gray.height), cv.IPL_DEPTH_32F, 1)
-    dist8u1 = cv.CloneImage(gray)
-    dist8u2 = cv.CloneImage(gray)
-    dist8u = cv.CreateImage((gray.width, gray.height), cv.IPL_DEPTH_8U, 3)
-    dist32s = cv.CreateImage((gray.width, gray.height), cv.IPL_DEPTH_32S, 1)
-
-    # Convert to grayscale
-    edge = cv.CloneImage(gray)
-
-    # Create a window
-    cv.NamedWindow(wndname, 1)
-
-    # create a toolbar
-    cv.CreateTrackbar(tbarname, wndname, edge_thresh, 255, on_trackbar)
-
-    # Show the image
-    on_trackbar(edge_thresh)
-
-    # Wait for a key stroke; the same function arranges events processing
-    cv.WaitKey(0)
-    cv.DestroyAllWindows()
+    while True:
+        ch = cv2.waitKey(50)
+        if ch == 27:
+            break
+        if ch == ord('v'):
+            voronoi = not voronoi
+            print('showing', ['distance', 'voronoi'][voronoi])
+            update()
+        if need_update:
+            update()
+    cv2.destroyAllWindows()

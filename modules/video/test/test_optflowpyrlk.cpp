@@ -40,6 +40,7 @@
 //M*/
 
 #include "test_precomp.hpp"
+#include "opencv2/video/tracking_c.h"
 
 /* ///////////////////// pyrlk_test ///////////////////////// */
 
@@ -65,15 +66,16 @@ void CV_OptFlowPyrLKTest::run( int )
     double  max_err = 0., sum_err = 0;
     int     pt_cmpd = 0;
     int     pt_exceed = 0;
-    int     merr_i = 0, merr_j = 0, merr_k = 0;
+    int     merr_i = 0, merr_j = 0, merr_k = 0, merr_nan = 0;
     char    filename[1000];
 
     CvPoint2D32f *u = 0, *v = 0, *v2 = 0;
     CvMat *_u = 0, *_v = 0, *_v2 = 0;
     char* status = 0;
 
-    IplImage* imgI = 0;
-    IplImage* imgJ = 0;
+    IplImage imgI;
+    IplImage imgJ;
+    cv::Mat  imgI2, imgJ2;
 
     int  n = 0, i = 0;
 
@@ -115,9 +117,10 @@ void CV_OptFlowPyrLKTest::run( int )
 
     /* read first image */
     sprintf( filename, "%soptflow/%s", ts->get_data_path().c_str(), "rock_1.bmp" );
-    imgI = cvLoadImage( filename, -1 );
+    imgI2 = cv::imread( filename, cv::IMREAD_UNCHANGED );
+    imgI = imgI2;
 
-    if( !imgI )
+    if( imgI2.empty() )
     {
         ts->printf( cvtest::TS::LOG, "could not read %s\n", filename );
         code = cvtest::TS::FAIL_MISSING_TEST_DATA;
@@ -126,9 +129,10 @@ void CV_OptFlowPyrLKTest::run( int )
 
     /* read second image */
     sprintf( filename, "%soptflow/%s", ts->get_data_path().c_str(), "rock_2.bmp" );
-    imgJ = cvLoadImage( filename, -1 );
+    imgJ2 = cv::imread( filename, cv::IMREAD_UNCHANGED );
+    imgJ = imgJ2;
 
-    if( !imgJ )
+    if( imgJ2.empty() )
     {
         ts->printf( cvtest::TS::LOG, "could not read %s\n", filename );
         code = cvtest::TS::FAIL_MISSING_TEST_DATA;
@@ -139,7 +143,7 @@ void CV_OptFlowPyrLKTest::run( int )
     status = (char*)cvAlloc(n*sizeof(status[0]));
 
     /* calculate flow */
-    cvCalcOpticalFlowPyrLK( imgI, imgJ, 0, 0, u, v2, n, cvSize( 41, 41 ),
+    cvCalcOpticalFlowPyrLK( &imgI, &imgJ, 0, 0, u, v2, n, cvSize( 41, 41 ),
                             4, status, 0, cvTermCriteria( CV_TERMCRIT_ITER|
                             CV_TERMCRIT_EPS, 30, 0.01f ), 0 );
 
@@ -149,9 +153,15 @@ void CV_OptFlowPyrLKTest::run( int )
         if( status[i] != 0 )
         {
             double err;
-            if( cvIsNaN(v[i].x) )
+            if( cvIsNaN(v[i].x) || cvIsNaN(v[i].y) )
             {
                 merr_j++;
+                continue;
+            }
+
+            if( cvIsNaN(v2[i].x) || cvIsNaN(v2[i].y) )
+            {
+                merr_nan++;
                 continue;
             }
 
@@ -194,15 +204,19 @@ void CV_OptFlowPyrLKTest::run( int )
         goto _exit_;
     }
 
+    if( merr_nan > 0 )
+    {
+        ts->printf( cvtest::TS::LOG, "NAN tracking result with status != 0 (%d times)\n", merr_nan );
+        code = cvtest::TS::FAIL_BAD_ACCURACY;
+        goto _exit_;
+    }
+
 _exit_:
 
     cvFree( &status );
     cvReleaseMat( &_u );
     cvReleaseMat( &_v );
     cvReleaseMat( &_v2 );
-
-    cvReleaseImage( &imgI );
-    cvReleaseImage( &imgJ );
 
     if( code < 0 )
         ts->set_failed_test_info( code );

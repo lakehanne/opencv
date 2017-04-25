@@ -1,52 +1,96 @@
-#!/usr/bin/python
+#!/usr/bin/env python
+
+'''
+Morphology operations.
+
+Usage:
+  morphology.py [<image>]
+
+Keys:
+  1   - change operation
+  2   - change structure element shape
+  ESC - exit
+'''
+
+# Python 2/3 compatibility
+from __future__ import print_function
 import sys
-import urllib2
-import cv2.cv as cv
+PY3 = sys.version_info[0] == 3
 
-src = 0
-image = 0
-dest = 0
-element_shape = cv.CV_SHAPE_RECT
+import numpy as np
+import cv2
 
-def Opening(pos):
-    element = cv.CreateStructuringElementEx(pos*2+1, pos*2+1, pos, pos, element_shape)
-    cv.Erode(src, image, element, 1)
-    cv.Dilate(image, dest, element, 1)
-    cv.ShowImage("Opening & Closing", dest)
-def Closing(pos):
-    element = cv.CreateStructuringElementEx(pos*2+1, pos*2+1, pos, pos, element_shape)
-    cv.Dilate(src, image, element, 1)
-    cv.Erode(image, dest, element, 1)
-    cv.ShowImage("Opening & Closing", dest)
-def Erosion(pos):
-    element = cv.CreateStructuringElementEx(pos*2+1, pos*2+1, pos, pos, element_shape)
-    cv.Erode(src, dest, element, 1)
-    cv.ShowImage("Erosion & Dilation", dest)
-def Dilation(pos):
-    element = cv.CreateStructuringElementEx(pos*2+1, pos*2+1, pos, pos, element_shape)
-    cv.Dilate(src, dest, element, 1)
-    cv.ShowImage("Erosion & Dilation", dest)
 
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        src = cv.LoadImage(sys.argv[1], cv.CV_LOAD_IMAGE_COLOR)
+if __name__ == '__main__':
+    print(__doc__)
+
+    import sys
+    from itertools import cycle
+    from common import draw_str
+
+    try:
+        fn = sys.argv[1]
+    except:
+        fn = '../data/baboon.jpg'
+
+    img = cv2.imread(fn)
+
+    if img is None:
+        print('Failed to load image file:', fn)
+        sys.exit(1)
+
+    cv2.imshow('original', img)
+
+    modes = cycle(['erode/dilate', 'open/close', 'blackhat/tophat', 'gradient'])
+    str_modes = cycle(['ellipse', 'rect', 'cross'])
+
+    if PY3:
+        cur_mode = next(modes)
+        cur_str_mode = next(str_modes)
     else:
-        url = 'https://raw.github.com/Itseez/opencv/master/samples/c/fruits.jpg'
-        filedata = urllib2.urlopen(url).read()
-        imagefiledata = cv.CreateMatHeader(1, len(filedata), cv.CV_8UC1)
-        cv.SetData(imagefiledata, filedata, len(filedata))
-        src = cv.DecodeImage(imagefiledata, cv.CV_LOAD_IMAGE_COLOR)
+        cur_mode = modes.next()
+        cur_str_mode = str_modes.next()
 
-    image = cv.CloneImage(src)
-    dest = cv.CloneImage(src)
-    cv.NamedWindow("Opening & Closing", 1)
-    cv.NamedWindow("Erosion & Dilation", 1)
-    cv.ShowImage("Opening & Closing", src)
-    cv.ShowImage("Erosion & Dilation", src)
-    cv.CreateTrackbar("Open", "Opening & Closing", 0, 10, Opening)
-    cv.CreateTrackbar("Close", "Opening & Closing", 0, 10, Closing)
-    cv.CreateTrackbar("Dilate", "Erosion & Dilation", 0, 10, Dilation)
-    cv.CreateTrackbar("Erode", "Erosion & Dilation", 0, 10, Erosion)
-    cv.WaitKey(0)
-    cv.DestroyWindow("Opening & Closing")
-    cv.DestroyWindow("Erosion & Dilation")
+    def update(dummy=None):
+        sz = cv2.getTrackbarPos('op/size', 'morphology')
+        iters = cv2.getTrackbarPos('iters', 'morphology')
+        opers = cur_mode.split('/')
+        if len(opers) > 1:
+            sz = sz - 10
+            op = opers[sz > 0]
+            sz = abs(sz)
+        else:
+            op = opers[0]
+        sz = sz*2+1
+
+        str_name = 'MORPH_' + cur_str_mode.upper()
+        oper_name = 'MORPH_' + op.upper()
+        st = cv2.getStructuringElement(getattr(cv2, str_name), (sz, sz))
+        res = cv2.morphologyEx(img, getattr(cv2, oper_name), st, iterations=iters)
+
+        draw_str(res, (10, 20), 'mode: ' + cur_mode)
+        draw_str(res, (10, 40), 'operation: ' + oper_name)
+        draw_str(res, (10, 60), 'structure: ' + str_name)
+        draw_str(res, (10, 80), 'ksize: %d  iters: %d' % (sz, iters))
+        cv2.imshow('morphology', res)
+
+    cv2.namedWindow('morphology')
+    cv2.createTrackbar('op/size', 'morphology', 12, 20, update)
+    cv2.createTrackbar('iters', 'morphology', 1, 10, update)
+    update()
+    while True:
+        ch = cv2.waitKey()
+        if ch == 27:
+            break
+        if ch == ord('1'):
+            if PY3:
+                cur_mode = next(modes)
+            else:
+                cur_mode = modes.next()
+        if ch == ord('2'):
+            if PY3:
+                cur_str_mode = next(str_modes)
+            else:
+                cur_str_mode = str_modes.next()
+        update()
+    cv2.destroyAllWindows()

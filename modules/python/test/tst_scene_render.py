@@ -100,3 +100,20 @@ class TestSceneRender():
 
     def resetTime(self):
         self.time = 0.0
+
+
+if __name__ == '__main__':
+
+    backGr = cv2.imread('../../../samples/data/lena.jpg')
+
+    render = TestSceneRender(backGr, noise = 0.5)
+
+    while True:
+
+        img = render.getNextFrame()
+        cv2.imshow('img', img)
+
+        ch = cv2.waitKey(3)
+        if ch == 27:
+            break
+    cv2.destroyAllWindows()

@@ -40,6 +40,8 @@
 //M*/
 
 #include "precomp.hpp"
+#include "opencv2/core/core_c.h"
+
 #include <ctype.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -64,8 +66,33 @@
 #include <setjmp.h>
 #endif
 
+// isDirectory
+#if defined WIN32 || defined _WIN32 || defined WINCE
+# include <windows.h>
+#else
+# include <dirent.h>
+# include <sys/stat.h>
+#endif
+
+
+#include "opencv_tests_config.hpp"
+
 namespace cvtest
 {
+
+uint64 param_seed = 0x12345678; // real value is passed via parseCustomOptions function
+
+static std::string path_join(const std::string& prefix, const std::string& subpath)
+{
+    CV_Assert(subpath.empty() || subpath[0] != '/');
+    if (prefix.empty())
+        return subpath;
+    bool skipSlash = prefix.size() > 0 ? (prefix[prefix.size()-1] == '/' || prefix[prefix.size()-1] == '\\') : false;
+    std::string path = prefix + (skipSlash ? "" : "/") + subpath;
+    return path;
+}
+
+
 
 /*****************************************************************************************\
 *                                Exception and memory handlers                            *
@@ -77,7 +104,7 @@ namespace cvtest
 #ifdef _MSC_VER
 static void SEHTranslator( unsigned int /*u*/, EXCEPTION_POINTERS* pExp )
 {
-    int code = TS::FAIL_EXCEPTION;
+    TS::FailureCode code = TS::FAIL_EXCEPTION;
     switch( pExp->ExceptionRecord->ExceptionCode )
     {
     case EXCEPTION_ACCESS_VIOLATION:
@@ -118,7 +145,7 @@ static jmp_buf tsJmpMark;
 
 static void signalHandler( int sig_code )
 {
-    int code = TS::FAIL_EXCEPTION;
+    TS::FailureCode code = TS::FAIL_EXCEPTION;
     switch( sig_code )
     {
     case SIGFPE:
@@ -132,7 +159,7 @@ static void signalHandler( int sig_code )
         code = TS::FAIL_EXCEPTION;
     }
 
-    longjmp( tsJmpMark, code );
+    longjmp( tsJmpMark, (int)code );
 }
 
 #endif
@@ -213,7 +240,7 @@ void BaseTest::safe_run( int start_from )
         if( !_code )
             run( start_from );
         else
-            throw _code;
+            throw TS::FailureCode(_code);
         #else
             run( start_from );
         #endif
@@ -223,14 +250,24 @@ void BaseTest::safe_run( int start_from )
             const char* errorStr = cvErrorStr(exc.code);
             char buf[1 << 16];
 
-            sprintf( buf, "OpenCV Error: %s (%s) in %s, file %s, line %d",
+            sprintf( buf, "OpenCV Error:\n\t%s (%s) in %s, file %s, line %d",
                     errorStr, exc.err.c_str(), exc.func.size() > 0 ?
                     exc.func.c_str() : "unknown function", exc.file.c_str(), exc.line );
             ts->printf(TS::LOG, "%s\n", buf);
+
             ts->set_failed_test_info( TS::FAIL_ERROR_IN_CALLED_FUNC );
+        }
+        catch (const TS::FailureCode& fc)
+        {
+            std::string errorStr = TS::str_from_code(fc);
+            ts->printf(TS::LOG, "General failure:\n\t%s (%d)\n", errorStr.c_str(), fc);
+
+            ts->set_failed_test_info( fc );
         }
         catch (...)
         {
+            ts->printf(TS::LOG, "Unknown failure\n");
+
             ts->set_failed_test_info( TS::FAIL_EXCEPTION );
         }
     }
@@ -320,10 +357,7 @@ int BaseTest::update_progress( int progress, int test_case_idx, int count, doubl
 
 BadArgTest::BadArgTest()
 {
-    progress        = -1;
     test_case_idx   = -1;
-    freq            = cv::getTickFrequency();
-    t               = -1;
     // oldErrorCbk     = 0;
     // oldErrorCbkData = 0;
 }
@@ -334,21 +368,6 @@ BadArgTest::~BadArgTest(void)
 
 int BadArgTest::run_test_case( int expected_code, const string& _descr )
 {
-    double new_t = (double)cv::getTickCount(), dt;
-    if( test_case_idx < 0 )
-    {
-        test_case_idx = 0;
-        progress      = 0;
-        t             = 0;
-        dt            = 0;
-    }
-    else
-    {
-        dt = (new_t - t)/(freq*1000);
-        t  = new_t;
-    }
-    progress = update_progress(progress, test_case_idx, 0, dt);
-
     int errcount = 0;
     bool thrown = false;
     const char* descr = _descr.c_str() ? _descr.c_str() : "";
@@ -419,7 +438,7 @@ TS::~TS()
 } // dtor
 
 
-string TS::str_from_code( int code )
+string TS::str_from_code( const TS::FailureCode code )
 {
     switch( code )
     {
@@ -447,7 +466,7 @@ string TS::str_from_code( int code )
 
 static int tsErrorCallback( int status, const char* func_name, const char* err_msg, const char* file_name, int line, TS* ts )
 {
-    ts->printf(TS::LOG, "OpenCV Error: %s (%s) in %s, file %s, line %d\n", cvErrorStr(status), err_msg, func_name[0] != 0 ? func_name : "unknown function", file_name, line);
+    ts->printf(TS::LOG, "OpenCV Error:\n\t%s (%s) in %s, file %s, line %d\n", cvErrorStr(status), err_msg, func_name[0] != 0 ? func_name : "unknown function", file_name, line);
     return 0;
 }
 
@@ -455,15 +474,16 @@ static int tsErrorCallback( int status, const char* func_name, const char* err_m
 
 void TS::init( const string& modulename )
 {
+    data_search_subdir.push_back(modulename);
+#ifndef WINRT
     char* datapath_dir = getenv("OPENCV_TEST_DATA_PATH");
+#else
+    char* datapath_dir = OPENCV_TEST_DATA_PATH;
+#endif
 
     if( datapath_dir )
     {
-        char buf[1024];
-        size_t l = strlen(datapath_dir);
-        bool haveSlash = l > 0 && (datapath_dir[l-1] == '/' || datapath_dir[l-1] == '\\');
-        sprintf( buf, "%s%s%s/", datapath_dir, haveSlash ? "" : "/", modulename.c_str() );
-        data_path = string(buf);
+        data_path = path_join(path_join(datapath_dir, modulename), "");
     }
 
     cv::redirectError((cv::ErrorCallback)tsErrorCallback, this);
@@ -500,7 +520,7 @@ void TS::init( const string& modulename )
 
 void TS::set_gtest_status()
 {
-    int code = get_err_code();
+    TS::FailureCode code = get_err_code();
     if( code >= 0 )
         return SUCCEED();
 
@@ -512,7 +532,7 @@ void TS::set_gtest_status()
     if( !output_buf[SUMMARY_IDX].empty() )
         logs += "\n-----------------------------------\n\tSUM: " + output_buf[SUMMARY_IDX];
     if( !output_buf[LOG_IDX].empty() )
-        logs += "\n-----------------------------------\n\tLOG: " + output_buf[LOG_IDX];
+        logs += "\n-----------------------------------\n\tLOG:\n" + output_buf[LOG_IDX];
     if( !output_buf[CONSOLE_IDX].empty() )
         logs += "\n-----------------------------------\n\tCONSOLE: " + output_buf[CONSOLE_IDX];
     logs += "\n-----------------------------------\n";
@@ -547,7 +567,7 @@ void TS::update_context( BaseTest* test, int test_case_idx, bool update_ts_conte
 void TS::set_failed_test_info( int fail_code )
 {
     if( current_test_info.code >= 0 )
-        current_test_info.code = fail_code;
+        current_test_info.code = TS::FailureCode(fail_code);
 }
 
 #if defined _MSC_VER && _MSC_VER < 1400
@@ -585,7 +605,7 @@ void TS::printf( int streams, const char* fmt, ... )
 }
 
 
-TS ts;
+static TS ts;
 TS* TS::ptr() { return &ts; }
 
 void fillGradient(Mat& img, int delta)
@@ -660,6 +680,152 @@ void smoothBorder(Mat& img, const Scalar& color, int delta)
         }
     }
 }
+
+
+bool test_ipp_check = false;
+
+void checkIppStatus()
+{
+    if (test_ipp_check)
+    {
+        int status = cv::ipp::getIppStatus();
+        EXPECT_LE(0, status) << cv::ipp::getIppErrorLocation().c_str();
+    }
+}
+
+void parseCustomOptions(int argc, char **argv)
+{
+    const char * const command_line_keys =
+        "{ ipp test_ipp_check |false    |check whether IPP works without failures }"
+        "{ test_seed          |809564   |seed for random numbers generator }"
+        "{ h   help           |false    |print help info                          }";
+
+    cv::CommandLineParser parser(argc, argv, command_line_keys);
+    if (parser.get<bool>("help"))
+    {
+        std::cout << "\nAvailable options besides google test option: \n";
+        parser.printMessage();
+    }
+
+    test_ipp_check = parser.get<bool>("test_ipp_check");
+    if (!test_ipp_check)
+#ifndef WINRT
+        test_ipp_check = getenv("OPENCV_IPP_CHECK") != NULL;
+#else
+        test_ipp_check = false;
+#endif
+
+    param_seed = parser.get<unsigned int>("test_seed");
+}
+
+
+static bool isDirectory(const std::string& path)
+{
+#if defined WIN32 || defined _WIN32 || defined WINCE
+    WIN32_FILE_ATTRIBUTE_DATA all_attrs;
+#ifdef WINRT
+    wchar_t wpath[MAX_PATH];
+    size_t copied = mbstowcs(wpath, path.c_str(), MAX_PATH);
+    CV_Assert((copied != MAX_PATH) && (copied != (size_t)-1));
+    BOOL status = ::GetFileAttributesExW(wpath, GetFileExInfoStandard, &all_attrs);
+#else
+    BOOL status = ::GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &all_attrs);
+#endif
+    DWORD attributes = all_attrs.dwFileAttributes;
+    return status && ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0);
+#else
+    struct stat s;
+    if (0 != stat(path.c_str(), &s))
+        return false;
+    return S_ISDIR(s.st_mode);
+#endif
+}
+
+CV_EXPORTS void addDataSearchPath(const std::string& path)
+{
+    if (isDirectory(path))
+        TS::ptr()->data_search_path.push_back(path);
+}
+CV_EXPORTS void addDataSearchSubDirectory(const std::string& subdir)
+{
+    TS::ptr()->data_search_subdir.push_back(subdir);
+}
+
+std::string findDataFile(const std::string& relative_path, bool required)
+{
+#define TEST_TRY_FILE_WITH_PREFIX(prefix) \
+{ \
+    std::string path = path_join(prefix, relative_path); \
+    /*printf("Trying %s\n", path.c_str());*/ \
+    FILE* f = fopen(path.c_str(), "rb"); \
+    if(f) { \
+       fclose(f); \
+       return path; \
+    } \
+}
+
+    const std::vector<std::string>& search_path = TS::ptr()->data_search_path;
+    for(size_t i = search_path.size(); i > 0; i--)
+    {
+        const std::string& prefix = search_path[i - 1];
+        TEST_TRY_FILE_WITH_PREFIX(prefix);
+    }
+
+    const std::vector<std::string>& search_subdir = TS::ptr()->data_search_subdir;
+
+#ifndef WINRT
+    char* datapath_dir = getenv("OPENCV_TEST_DATA_PATH");
+#else
+    char* datapath_dir = OPENCV_TEST_DATA_PATH;
+#endif
+
+    std::string datapath;
+    if (datapath_dir)
+    {
+        datapath = datapath_dir;
+        //CV_Assert(isDirectory(datapath) && "OPENCV_TEST_DATA_PATH is specified but it doesn't exist");
+        if (isDirectory(datapath))
+        {
+            for(size_t i = search_subdir.size(); i > 0; i--)
+            {
+                const std::string& subdir = search_subdir[i - 1];
+                std::string prefix = path_join(datapath, subdir);
+                TEST_TRY_FILE_WITH_PREFIX(prefix);
+            }
+        }
+    }
+#ifdef OPENCV_TEST_DATA_INSTALL_PATH
+    datapath = path_join("./", OPENCV_TEST_DATA_INSTALL_PATH);
+    if (isDirectory(datapath))
+    {
+        for(size_t i = search_subdir.size(); i > 0; i--)
+        {
+            const std::string& subdir = search_subdir[i - 1];
+            std::string prefix = path_join(datapath, subdir);
+            TEST_TRY_FILE_WITH_PREFIX(prefix);
+        }
+    }
+#ifdef OPENCV_INSTALL_PREFIX
+    else
+    {
+        datapath = path_join(OPENCV_INSTALL_PREFIX, OPENCV_TEST_DATA_INSTALL_PATH);
+        if (isDirectory(datapath))
+        {
+            for(size_t i = search_subdir.size(); i > 0; i--)
+            {
+                const std::string& subdir = search_subdir[i - 1];
+                std::string prefix = path_join(datapath, subdir);
+                TEST_TRY_FILE_WITH_PREFIX(prefix);
+            }
+        }
+    }
+#endif
+#endif
+    if (required)
+        CV_ErrorNoReturn(cv::Error::StsError, cv::format("OpenCV tests: Can't find required data file: %s", relative_path.c_str()));
+    throw SkipTestException(cv::format("OpenCV tests: Can't find data file: %s", relative_path.c_str()));
+}
+
 
 } //namespace cvtest
 

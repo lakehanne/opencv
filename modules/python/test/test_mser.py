@@ -33,6 +33,8 @@ class mser_test(NewOpenCVTests):
         ]
         thresharr = [ 0, 70, 120, 180, 255 ]
         kDelta = 5
+        mserExtractor = cv2.MSER_create()
+        mserExtractor.setDelta(kDelta)
         np.random.seed(10)
 
         for i in range(100):
@@ -40,7 +42,7 @@ class mser_test(NewOpenCVTests):
             use_big_image = int(np.random.rand(1,1)*7) != 0
             invert = int(np.random.rand(1,1)*2) != 0
             binarize = int(np.random.rand(1,1)*5) != 0 if use_big_image else False
-            blur = True #int(np.random.rand(1,1)*2) != 0 #binarized images are processed incorrectly
+            blur = int(np.random.rand(1,1)*2) != 0
             thresh = thresharr[int(np.random.rand(1,1)*5)]
             src0 = img if use_big_image else np.array(smallImg).astype('uint8')
             src = src0.copy()
@@ -48,7 +50,8 @@ class mser_test(NewOpenCVTests):
             kMinArea = 256 if use_big_image else 10
             kMaxArea = int(src.shape[0]*src.shape[1]/4)
 
-            mserExtractor = cv2.MSER(kDelta, kMinArea, kMaxArea)
+            mserExtractor.setMinArea(kMinArea)
+            mserExtractor.setMaxArea(kMaxArea)
             if invert:
                 cv2.bitwise_not(src, src)
             if binarize:
@@ -56,10 +59,11 @@ class mser_test(NewOpenCVTests):
             if blur:
                 src = cv2.GaussianBlur(src, (5, 5), 1.5, 1.5)
             minRegs = 7 if use_big_image else 2
-            maxRegs = 1000 if use_big_image else 15
+            maxRegs = 1000 if use_big_image else 20
             if binarize and (thresh == 0 or thresh == 255):
                 minRegs = maxRegs = 0
-            msers = mserExtractor.detect(src)
+            msers, boxes = mserExtractor.detectRegions(src)
             nmsers = len(msers)
+            self.assertEqual(nmsers, len(boxes))
             self.assertLessEqual(minRegs, nmsers)
             self.assertGreaterEqual(maxRegs, nmsers)

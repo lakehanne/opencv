@@ -1,9 +1,10 @@
 #define LOG_TAG "org.opencv.core.Mat"
 
 #include <stdexcept>
+#include <string>
 
 #include "common.h"
-#include "opencv2/core/core.hpp"
+#include "opencv2/core.hpp"
 
 using namespace cv;
 
@@ -466,7 +467,7 @@ JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_n_1dims
         LOGD("%s", method_name);
         Mat* me = (Mat*) self; //TODO: check for NULL
         return me->dims;
-    } catch(cv::Exception e) {
+    } catch(const cv::Exception& e) {
         throwJavaException(env, &e, method_name);
     } catch (...) {
         throwJavaException(env, 0, method_name);
@@ -1814,6 +1815,29 @@ JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nPutD
 
 } // extern "C"
 
+namespace {
+  /// map java-array-types to assigned data
+  template<class T> struct JavaOpenCVTrait;
+
+/// less typing for specialisations
+#define JOCvT(t,s,c1,c2) \
+  template<> struct JavaOpenCVTrait<t##Array> { \
+    typedef t value_type;    /* type of array element */ \
+    static const char get[]; /* name of getter */ \
+    static const char put[]; /* name of putter */ \
+    enum {cvtype_1 = c1, cvtype_2 = c2 }; /* allowed OpenCV-types */ \
+  }; \
+  const char JavaOpenCVTrait<t##Array>::get[] = "Mat::nGet" s "()"; \
+  const char JavaOpenCVTrait<t##Array>::put[] = "Mat::nPut" s "()"
+
+  JOCvT(jbyte, "B", CV_8U, CV_8S);
+  JOCvT(jshort, "S", CV_16U, CV_16S);
+  JOCvT(jint, "I", CV_32S, CV_32S);
+  JOCvT(jfloat, "F", CV_32F, CV_32F);
+  JOCvT(jdouble, "D", CV_64F, CV_64F);
+#undef JOCvT
+}
+
 template<typename T> static int mat_put(cv::Mat* m, int row, int col, int count, char* buff)
 {
     if(! m) return 0;
@@ -1844,6 +1868,28 @@ template<typename T> static int mat_put(cv::Mat* m, int row, int col, int count,
     return res;
 }
 
+template<class ARRAY> static jint java_mat_put(JNIEnv* env, jlong self, jint row, jint col, jint count, ARRAY vals)
+{
+    static const char *method_name = JavaOpenCVTrait<ARRAY>::put;
+    try {
+        LOGD("%s", method_name);
+        cv::Mat* me = (cv::Mat*) self;
+        if(! self) return 0; // no native object behind
+        if(me->depth() != JavaOpenCVTrait<ARRAY>::cvtype_1 && me->depth() != JavaOpenCVTrait<ARRAY>::cvtype_2) return 0; // incompatible type
+        if(me->rows<=row || me->cols<=col) return 0; // indexes out of range
+
+        char* values = (char*)env->GetPrimitiveArrayCritical(vals, 0);
+        int res = mat_put<typename JavaOpenCVTrait<ARRAY>::value_type>(me, row, col, count, values);
+        env->ReleasePrimitiveArrayCritical(vals, values, JNI_ABORT);
+        return res;
+    } catch(const std::exception &e) {
+        throwJavaException(env, &e, method_name);
+    } catch (...) {
+        throwJavaException(env, 0, method_name);
+    }
+
+    return 0;
+}
 
 extern "C" {
 
@@ -1853,25 +1899,7 @@ JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nPutB
 JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nPutB
     (JNIEnv* env, jclass, jlong self, jint row, jint col, jint count, jbyteArray vals)
 {
-    static const char method_name[] = "Mat::nPutB()";
-    try {
-        LOGD("%s", method_name);
-        cv::Mat* me = (cv::Mat*) self;
-        if(! self) return 0; // no native object behind
-        if(me->depth() != CV_8U && me->depth() != CV_8S) return 0; // incompatible type
-        if(me->rows<=row || me->cols<=col) return 0; // indexes out of range
-
-        char* values = (char*)env->GetPrimitiveArrayCritical(vals, 0);
-        int res = mat_put<char>(me, row, col, count, values);
-        env->ReleasePrimitiveArrayCritical(vals, values, 0);
-        return res;
-    } catch(const std::exception &e) {
-        throwJavaException(env, &e, method_name);
-    } catch (...) {
-        throwJavaException(env, 0, method_name);
-    }
-
-    return 0;
+  return java_mat_put(env, self, row, col, count, vals);
 }
 
 JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nPutS
@@ -1880,25 +1908,7 @@ JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nPutS
 JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nPutS
     (JNIEnv* env, jclass, jlong self, jint row, jint col, jint count, jshortArray vals)
 {
-    static const char method_name[] = "Mat::nPutS()";
-    try {
-        LOGD("%s", method_name);
-        cv::Mat* me = (cv::Mat*) self;
-        if(! self) return 0; // no native object behind
-        if(me->depth() != CV_16U && me->depth() != CV_16S) return 0; // incompatible type
-        if(me->rows<=row || me->cols<=col) return 0; // indexes out of range
-
-        char* values = (char*)env->GetPrimitiveArrayCritical(vals, 0);
-        int res = mat_put<short>(me, row, col, count, values);
-        env->ReleasePrimitiveArrayCritical(vals, values, 0);
-        return res;
-    } catch(const std::exception &e) {
-        throwJavaException(env, &e, method_name);
-    } catch (...) {
-        throwJavaException(env, 0, method_name);
-    }
-
-    return 0;
+  return java_mat_put(env, self, row, col, count, vals);
 }
 
 JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nPutI
@@ -1907,25 +1917,7 @@ JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nPutI
 JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nPutI
     (JNIEnv* env, jclass, jlong self, jint row, jint col, jint count, jintArray vals)
 {
-    static const char method_name[] = "Mat::nPutI()";
-    try {
-        LOGD("%s", method_name);
-        cv::Mat* me = (cv::Mat*) self;
-        if(! self) return 0; // no native object behind
-        if(me->depth() != CV_32S) return 0; // incompatible type
-        if(me->rows<=row || me->cols<=col) return 0; // indexes out of range
-
-        char* values = (char*)env->GetPrimitiveArrayCritical(vals, 0);
-        int res = mat_put<int>(me, row, col, count, values);
-        env->ReleasePrimitiveArrayCritical(vals, values, 0);
-        return res;
-    } catch(const std::exception &e) {
-        throwJavaException(env, &e, method_name);
-    } catch (...) {
-        throwJavaException(env, 0, method_name);
-    }
-
-    return 0;
+  return java_mat_put(env, self, row, col, count, vals);
 }
 
 JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nPutF
@@ -1934,31 +1926,12 @@ JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nPutF
 JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nPutF
     (JNIEnv* env, jclass, jlong self, jint row, jint col, jint count, jfloatArray vals)
 {
-    static const char method_name[] = "Mat::nPutF()";
-    try {
-        LOGD("%s", method_name);
-        cv::Mat* me = (cv::Mat*) self;
-        if(! self) return 0; // no native object behind
-        if(me->depth() != CV_32F) return 0; // incompatible type
-        if(me->rows<=row || me->cols<=col) return 0; // indexes out of range
-
-        char* values = (char*)env->GetPrimitiveArrayCritical(vals, 0);
-        int res = mat_put<float>(me, row, col, count, values);
-        env->ReleasePrimitiveArrayCritical(vals, values, 0);
-        return res;
-    } catch(const std::exception &e) {
-        throwJavaException(env, &e, method_name);
-    } catch (...) {
-        throwJavaException(env, 0, method_name);
-    }
-
-    return 0;
+  return java_mat_put(env, self, row, col, count, vals);
 }
-
 
 } // extern "C"
 
-template<typename T> int mat_get(cv::Mat* m, int row, int col, int count, char* buff)
+template<typename T> static int mat_get(cv::Mat* m, int row, int col, int count, char* buff)
 {
     if(! m) return 0;
     if(! buff) return 0;
@@ -1988,6 +1961,28 @@ template<typename T> int mat_get(cv::Mat* m, int row, int col, int count, char* 
     return res;
 }
 
+template<class ARRAY> static jint java_mat_get(JNIEnv* env, jlong self, jint row, jint col, jint count, ARRAY vals) {
+    static const char *method_name = JavaOpenCVTrait<ARRAY>::get;
+    try {
+        LOGD("%s", method_name);
+        cv::Mat* me = (cv::Mat*) self;
+        if(! self) return 0; // no native object behind
+        if(me->depth() != JavaOpenCVTrait<ARRAY>::cvtype_1 && me->depth() != JavaOpenCVTrait<ARRAY>::cvtype_2) return 0; // incompatible type
+        if(me->rows<=row || me->cols<=col) return 0; // indexes out of range
+
+        char* values = (char*)env->GetPrimitiveArrayCritical(vals, 0);
+        int res = mat_get<typename JavaOpenCVTrait<ARRAY>::value_type>(me, row, col, count, values);
+        env->ReleasePrimitiveArrayCritical(vals, values, 0);
+        return res;
+    } catch(const std::exception &e) {
+        throwJavaException(env, &e, method_name);
+    } catch (...) {
+        throwJavaException(env, 0, method_name);
+    }
+
+    return 0;
+}
+
 extern "C" {
 
 JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nGetB
@@ -1996,25 +1991,7 @@ JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nGetB
 JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nGetB
     (JNIEnv* env, jclass, jlong self, jint row, jint col, jint count, jbyteArray vals)
 {
-    static const char method_name[] = "Mat::nGetB()";
-    try {
-        LOGD("%s", method_name);
-        cv::Mat* me = (cv::Mat*) self;
-        if(! self) return 0; // no native object behind
-        if(me->depth() != CV_8U && me->depth() != CV_8S) return 0; // incompatible type
-        if(me->rows<=row || me->cols<=col) return 0; // indexes out of range
-
-        char* values = (char*)env->GetPrimitiveArrayCritical(vals, 0);
-        int res = mat_get<char>(me, row, col, count, values);
-        env->ReleasePrimitiveArrayCritical(vals, values, 0);
-        return res;
-    } catch(const std::exception &e) {
-        throwJavaException(env, &e, method_name);
-    } catch (...) {
-        throwJavaException(env, 0, method_name);
-    }
-
-    return 0;
+  return java_mat_get(env, self, row, col, count, vals);
 }
 
 JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nGetS
@@ -2023,25 +2000,7 @@ JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nGetS
 JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nGetS
     (JNIEnv* env, jclass, jlong self, jint row, jint col, jint count, jshortArray vals)
 {
-    static const char method_name[] = "Mat::nGetS()";
-    try {
-        LOGD("%s", method_name);
-        cv::Mat* me = (cv::Mat*) self;
-        if(! self) return 0; // no native object behind
-        if(me->depth() != CV_16U && me->depth() != CV_16S) return 0; // incompatible type
-        if(me->rows<=row || me->cols<=col) return 0; // indexes out of range
-
-        char* values = (char*)env->GetPrimitiveArrayCritical(vals, 0);
-        int res = mat_get<short>(me, row, col, count, values);
-        env->ReleasePrimitiveArrayCritical(vals, values, 0);
-        return res;
-    } catch(const std::exception &e) {
-        throwJavaException(env, &e, method_name);
-    } catch (...) {
-        throwJavaException(env, 0, method_name);
-    }
-
-    return 0;
+  return java_mat_get(env, self, row, col, count, vals);
 }
 
 JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nGetI
@@ -2050,25 +2009,7 @@ JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nGetI
 JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nGetI
     (JNIEnv* env, jclass, jlong self, jint row, jint col, jint count, jintArray vals)
 {
-    static const char method_name[] = "Mat::nGetI()";
-    try {
-        LOGD("%s", method_name);
-        cv::Mat* me = (cv::Mat*) self;
-        if(! self) return 0; // no native object behind
-        if(me->depth() != CV_32S) return 0; // incompatible type
-        if(me->rows<=row || me->cols<=col) return 0; // indexes out of range
-
-        char* values = (char*)env->GetPrimitiveArrayCritical(vals, 0);
-        int res = mat_get<int>(me, row, col, count, values);
-        env->ReleasePrimitiveArrayCritical(vals, values, 0);
-        return res;
-    } catch(const std::exception &e) {
-        throwJavaException(env, &e, method_name);
-    } catch (...) {
-        throwJavaException(env, 0, method_name);
-    }
-
-    return 0;
+  return java_mat_get(env, self, row, col, count, vals);
 }
 
 JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nGetF
@@ -2077,25 +2018,7 @@ JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nGetF
 JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nGetF
     (JNIEnv* env, jclass, jlong self, jint row, jint col, jint count, jfloatArray vals)
 {
-    static const char method_name[] = "Mat::nGetF()";
-    try {
-        LOGD("%s", method_name);
-        cv::Mat* me = (cv::Mat*) self;
-        if(! self) return 0; // no native object behind
-        if(me->depth() != CV_32F) return 0; // incompatible type
-        if(me->rows<=row || me->cols<=col) return 0; // indexes out of range
-
-        char* values = (char*)env->GetPrimitiveArrayCritical(vals, 0);
-        int res = mat_get<float>(me, row, col, count, values);
-        env->ReleasePrimitiveArrayCritical(vals, values, 0);
-        return res;
-    } catch(const std::exception &e) {
-        throwJavaException(env, &e, method_name);
-    } catch (...) {
-        throwJavaException(env, 0, method_name);
-    }
-
-    return 0;
+  return java_mat_get(env, self, row, col, count, vals);
 }
 
 JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nGetD
@@ -2104,25 +2027,7 @@ JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nGetD
 JNIEXPORT jint JNICALL Java_org_opencv_core_Mat_nGetD
     (JNIEnv* env, jclass, jlong self, jint row, jint col, jint count, jdoubleArray vals)
 {
-    static const char method_name[] = "Mat::nGetD()";
-    try {
-        LOGD("%s", method_name);
-        cv::Mat* me = (cv::Mat*) self;
-        if(! self) return 0; // no native object behind
-        if(me->depth() != CV_64F) return 0; // incompatible type
-        if(me->rows<=row || me->cols<=col) return 0; // indexes out of range
-
-        char* values = (char*)env->GetPrimitiveArrayCritical(vals, 0);
-        int res = mat_get<double>(me, row, col, count, values);
-        env->ReleasePrimitiveArrayCritical(vals, values, 0);
-        return res;
-    } catch(const std::exception &e) {
-        throwJavaException(env, &e, method_name);
-    } catch (...) {
-        throwJavaException(env, 0, method_name);
-    }
-
-    return 0;
+  return java_mat_get(env, self, row, col, count, vals);
 }
 
 JNIEXPORT jdoubleArray JNICALL Java_org_opencv_core_Mat_nGet
@@ -2173,10 +2078,13 @@ JNIEXPORT jstring JNICALL Java_org_opencv_core_Mat_nDump
     try {
         LOGD("%s", method_name);
         cv::Mat* me = (cv::Mat*) self; //TODO: check for NULL
-        std::stringstream s;
-        s << *me;
-        std::string str = s.str();
-        return env->NewStringUTF(str.c_str());
+        String s;
+        Ptr<Formatted> fmtd = Formatter::get()->format(*me);
+        for(const char* str = fmtd->next(); str; str = fmtd->next())
+        {
+            s = s + String(str);
+        }
+        return env->NewStringUTF(s.c_str());
     } catch(const std::exception &e) {
         throwJavaException(env, &e, method_name);
     } catch (...) {

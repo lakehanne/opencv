@@ -19,17 +19,28 @@ import org.opencv.core.Point3;
 import org.opencv.core.Rect;
 import org.opencv.core.Scalar;
 import org.opencv.core.Size;
-import org.opencv.features2d.DMatch;
-import org.opencv.features2d.KeyPoint;
-import org.opencv.highgui.Highgui;
+import org.opencv.core.DMatch;
+import org.opencv.core.KeyPoint;
+import org.opencv.imgcodecs.Imgcodecs;
 
 import android.util.Log;
+import java.lang.reflect.Method;
+import static junit.framework.Assert.assertFalse;
+import static junit.framework.Assert.assertTrue;
 
 public class OpenCVTestCase extends TestCase {
+
+    public static class TestSkipException extends RuntimeException {
+        public TestSkipException() {}
+    }
+
     //change to 'true' to unblock fail on fail("Not yet implemented")
     public static final boolean passNYI = true;
 
     protected static boolean isTestCaseEnabled = true;
+
+    protected static final String XFEATURES2D = "org.opencv.xfeatures2d.";
+    protected static final String DEFAULT_FACTORY = "create";
 
     protected static final int matSize = 10;
     protected static final double EPS = 0.001;
@@ -134,8 +145,8 @@ public class OpenCVTestCase extends TestCase {
         rgba0 = new Mat(matSize, matSize, CvType.CV_8UC4, Scalar.all(0));
         rgba128 = new Mat(matSize, matSize, CvType.CV_8UC4, Scalar.all(128));
 
-        rgbLena = Highgui.imread(OpenCVTestRunner.LENA_PATH);
-        grayChess = Highgui.imread(OpenCVTestRunner.CHESS_PATH, 0);
+        rgbLena = Imgcodecs.imread(OpenCVTestRunner.LENA_PATH);
+        grayChess = Imgcodecs.imread(OpenCVTestRunner.CHESS_PATH, 0);
 
         v1 = new Mat(1, 3, CvType.CV_32F);
         v1.put(0, 0, 1.0, 3.0, 2.0);
@@ -182,10 +193,38 @@ public class OpenCVTestCase extends TestCase {
     protected void runTest() throws Throwable {
         // Do nothing if the precondition does not hold.
         if (isTestCaseEnabled) {
-            super.runTest();
+            try {
+                super.runTest();
+            } catch (TestSkipException ex) {
+                Log.w(TAG, "Test case \"" + this.getClass().getName() + "\" skipped!");
+                assertTrue(true);
+            }
         } else {
             Log.e(TAG, "Test case \"" + this.getClass().getName() + "\" disabled!");
         }
+    }
+
+    public void runBare() throws Throwable {
+        Throwable exception = null;
+        try {
+            setUp();
+        } catch (TestSkipException ex) {
+            Log.w(TAG, "Test case \"" + this.getClass().getName() + "\" skipped!");
+            assertTrue(true);
+            return;
+        }
+        try {
+            runTest();
+        } catch (Throwable running) {
+            exception = running;
+        } finally {
+            try {
+                tearDown();
+            } catch (Throwable tearingDown) {
+                if (exception == null) exception = tearingDown;
+            }
+        }
+        if (exception != null) throw exception;
     }
 
     protected Mat getMat(int type, double... vals)
@@ -203,6 +242,10 @@ public class OpenCVTestCase extends TestCase {
         if(msg == "Not yet implemented" && passNYI)
             return;
         TestCase.fail(msg);
+    }
+
+    public static void assertGE(double v1, double v2) {
+        assertTrue("Failed: " + v1 + " >= " + v2, v1 >= v2);
     }
 
     public static <E extends Number> void assertListEquals(List<E> list1, List<E> list2) {
@@ -419,10 +462,10 @@ public class OpenCVTestCase extends TestCase {
 
         if (isEqualityMeasured)
             assertTrue("Max difference between expected and actiual Mats is "+ maxDiff + ", that bigger than " + eps,
-                    Core.checkRange(diff, true, 0.0, eps));
+                    maxDiff <= eps);
         else
             assertFalse("Max difference between expected and actiual Mats is "+ maxDiff + ", that less than " + eps,
-                    Core.checkRange(diff, true, 0.0, eps));
+                    maxDiff <= eps);
     }
 
     protected static String readFile(String path) {
@@ -459,6 +502,84 @@ public class OpenCVTestCase extends TestCase {
                     OpenCVTestRunner.Log("Exception is thrown: " + e);
                 }
         }
+    }
+
+    protected <T> T createClassInstance(String cname, String factoryName, Class cParams[], Object oValues[]) {
+        T instance = null;
+
+        assertFalse("Class name should not be empty", "".equals(cname));
+
+        String message="";
+        try {
+            Class algClass = getClassForName(cname);
+            Method factory = null;
+
+            if(cParams!=null && cParams.length>0) {
+                if(!"".equals(factoryName)) {
+                    factory = algClass.getDeclaredMethod(factoryName, cParams);
+                    instance = (T) factory.invoke(null, oValues);
+                }
+                else {
+                    instance = (T) algClass.getConstructor(cParams).newInstance(oValues);
+                }
+            }
+            else {
+                if(!"".equals(factoryName)) {
+                    factory = algClass.getDeclaredMethod(factoryName);
+                    instance = (T) factory.invoke(null);
+                }
+                else {
+                    instance = (T) algClass.getConstructor().newInstance();
+                }
+            }
+        }
+        catch(Exception ex) {
+            if (cname.startsWith(XFEATURES2D))
+            {
+                throw new TestSkipException();
+            }
+            message = TAG + " :: " + "could not instantiate " + cname + "! Exception: " + ex.getMessage();
+        }
+
+        assertTrue(message, instance!=null);
+
+        return instance;
+    }
+
+    protected <T> void setProperty(T instance, String propertyName, String propertyType, Object propertyValue) {
+        String message = "";
+        try {
+            String smethod = "set" + propertyName.substring(0,1).toUpperCase() + propertyName.substring(1);
+            Method setter = instance.getClass().getMethod(smethod, getClassForName(propertyType));
+            setter.invoke(instance, propertyValue);
+        }
+        catch(Exception ex) {
+            message = "Error when setting property [" + propertyName + "]: " + ex.getMessage();
+        }
+
+        assertTrue(message, "".equals(message));
+    }
+
+    protected Class getClassForName(String sclass) throws ClassNotFoundException{
+        if("int".equals(sclass))
+            return Integer.TYPE;
+        else if("long".equals(sclass))
+            return Long.TYPE;
+        else if("double".equals(sclass))
+            return Double.TYPE;
+        else if("float".equals(sclass))
+            return Float.TYPE;
+        else if("boolean".equals(sclass))
+            return Boolean.TYPE;
+        else if("char".equals(sclass))
+            return Character.TYPE;
+        else if("byte".equals(sclass))
+            return Byte.TYPE;
+        else if("short".equals(sclass))
+            return Short.TYPE;
+        else
+            return Class.forName(sclass);
+
     }
 
 }

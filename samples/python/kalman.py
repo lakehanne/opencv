@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 """
    Tracking of rotating point.
    Rotation speed is constant.
@@ -11,88 +11,86 @@
    Pressing any key (except ESC) will reset the tracking with a different speed.
    Pressing ESC will stop the program.
 """
-import urllib2
-import cv2.cv as cv
-from math import cos, sin, sqrt
+# Python 2/3 compatibility
 import sys
+PY3 = sys.version_info[0] == 3
+
+if PY3:
+    long = int
+
+import cv2
+from math import cos, sin, sqrt
+import numpy as np
 
 if __name__ == "__main__":
-    A = [ [1, 1], [0, 1] ]
 
-    img = cv.CreateImage((500, 500), 8, 3)
-    kalman = cv.CreateKalman(2, 1, 0)
-    state = cv.CreateMat(2, 1, cv.CV_32FC1)  # (phi, delta_phi)
-    process_noise = cv.CreateMat(2, 1, cv.CV_32FC1)
-    measurement = cv.CreateMat(1, 1, cv.CV_32FC1)
-    rng = cv.RNG(-1)
-    code = -1L
+    img_height = 500
+    img_width = 500
+    kalman = cv2.KalmanFilter(2, 1, 0)
 
-    cv.Zero(measurement)
-    cv.NamedWindow("Kalman", 1)
+    code = long(-1)
+
+    cv2.namedWindow("Kalman")
 
     while True:
-        cv.RandArr(rng, state, cv.CV_RAND_NORMAL, cv.RealScalar(0), cv.RealScalar(0.1))
+        state = 0.1 * np.random.randn(2, 1)
 
-        kalman.transition_matrix[0,0] = 1
-        kalman.transition_matrix[0,1] = 1
-        kalman.transition_matrix[1,0] = 0
-        kalman.transition_matrix[1,1] = 1
-
-        cv.SetIdentity(kalman.measurement_matrix, cv.RealScalar(1))
-        cv.SetIdentity(kalman.process_noise_cov, cv.RealScalar(1e-5))
-        cv.SetIdentity(kalman.measurement_noise_cov, cv.RealScalar(1e-1))
-        cv.SetIdentity(kalman.error_cov_post, cv.RealScalar(1))
-        cv.RandArr(rng, kalman.state_post, cv.CV_RAND_NORMAL, cv.RealScalar(0), cv.RealScalar(0.1))
-
+        kalman.transitionMatrix = np.array([[1., 1.], [0., 1.]])
+        kalman.measurementMatrix = 1. * np.ones((1, 2))
+        kalman.processNoiseCov = 1e-5 * np.eye(2)
+        kalman.measurementNoiseCov = 1e-1 * np.ones((1, 1))
+        kalman.errorCovPost = 1. * np.ones((2, 2))
+        kalman.statePost = 0.1 * np.random.randn(2, 1)
 
         while True:
             def calc_point(angle):
-                return (cv.Round(img.width/2 + img.width/3*cos(angle)),
-                         cv.Round(img.height/2 - img.width/3*sin(angle)))
+                return (np.around(img_width/2 + img_width/3*cos(angle), 0).astype(int),
+                        np.around(img_height/2 - img_width/3*sin(angle), 1).astype(int))
 
-            state_angle = state[0,0]
+            state_angle = state[0, 0]
             state_pt = calc_point(state_angle)
 
-            prediction = cv.KalmanPredict(kalman)
+            prediction = kalman.predict()
             predict_angle = prediction[0, 0]
             predict_pt = calc_point(predict_angle)
 
-            cv.RandArr(rng, measurement, cv.CV_RAND_NORMAL, cv.RealScalar(0),
-                       cv.RealScalar(sqrt(kalman.measurement_noise_cov[0, 0])))
+            measurement = kalman.measurementNoiseCov * np.random.randn(1, 1)
 
             # generate measurement
-            cv.MatMulAdd(kalman.measurement_matrix, state, measurement, measurement)
+            measurement = np.dot(kalman.measurementMatrix, state) + measurement
 
             measurement_angle = measurement[0, 0]
             measurement_pt = calc_point(measurement_angle)
 
             # plot points
             def draw_cross(center, color, d):
-                cv.Line(img, (center[0] - d, center[1] - d),
-                             (center[0] + d, center[1] + d), color, 1, cv.CV_AA, 0)
-                cv.Line(img, (center[0] + d, center[1] - d),
-                             (center[0] - d, center[1] + d), color, 1, cv.CV_AA, 0)
+                cv2.line(img,
+                         (center[0] - d, center[1] - d), (center[0] + d, center[1] + d),
+                         color, 1, cv2.LINE_AA, 0)
+                cv2.line(img,
+                         (center[0] + d, center[1] - d), (center[0] - d, center[1] + d),
+                         color, 1, cv2.LINE_AA, 0)
 
-            cv.Zero(img)
-            draw_cross(state_pt, cv.CV_RGB(255, 255, 255), 3)
-            draw_cross(measurement_pt, cv.CV_RGB(255, 0,0), 3)
-            draw_cross(predict_pt, cv.CV_RGB(0, 255, 0), 3)
-            cv.Line(img, state_pt, measurement_pt, cv.CV_RGB(255, 0,0), 3, cv. CV_AA, 0)
-            cv.Line(img, state_pt, predict_pt, cv.CV_RGB(255, 255, 0), 3, cv. CV_AA, 0)
+            img = np.zeros((img_height, img_width, 3), np.uint8)
+            draw_cross(np.int32(state_pt), (255, 255, 255), 3)
+            draw_cross(np.int32(measurement_pt), (0, 0, 255), 3)
+            draw_cross(np.int32(predict_pt), (0, 255, 0), 3)
 
-            cv.KalmanCorrect(kalman, measurement)
+            cv2.line(img, state_pt, measurement_pt, (0, 0, 255), 3, cv2.LINE_AA, 0)
+            cv2.line(img, state_pt, predict_pt, (0, 255, 255), 3, cv2.LINE_AA, 0)
 
-            cv.RandArr(rng, process_noise, cv.CV_RAND_NORMAL, cv.RealScalar(0),
-                       cv.RealScalar(sqrt(kalman.process_noise_cov[0, 0])))
-            cv.MatMulAdd(kalman.transition_matrix, state, process_noise, state)
+            kalman.correct(measurement)
 
-            cv.ShowImage("Kalman", img)
+            process_noise = sqrt(kalman.processNoiseCov[0,0]) * np.random.randn(2, 1)
+            state = np.dot(kalman.transitionMatrix, state) + process_noise
 
-            code = cv.WaitKey(100) % 0x100
+            cv2.imshow("Kalman", img)
+
+            code = cv2.waitKey(100)
             if code != -1:
                 break
 
         if code in [27, ord('q'), ord('Q')]:
             break
 
-    cv.DestroyWindow("Kalman")
+    cv2.destroyWindow("Kalman")

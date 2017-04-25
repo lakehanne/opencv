@@ -1,116 +1,128 @@
 #!/usr/bin/env python
 
-import cv2.cv as cv
+'''
+Camshift tracker
+================
 
-def is_rect_nonzero(r):
-    (_,_,w,h) = r
-    return (w > 0) and (h > 0)
+This is a demo that shows mean-shift based tracking
+You select a color objects such as your face and it tracks it.
+This reads from video camera (0 by default, or the camera number the user enters)
 
-class CamShiftDemo:
+http://www.robinhewitt.com/research/track/camshift.html
 
-    def __init__(self):
-        self.capture = cv.CaptureFromCAM(0)
-        cv.NamedWindow( "CamShiftDemo", 1 )
-        cv.NamedWindow( "Histogram", 1 )
-        cv.SetMouseCallback( "CamShiftDemo", self.on_mouse)
+Usage:
+------
+    camshift.py [<video source>]
 
-        self.drag_start = None      # Set to (x,y) when mouse starts drag
-        self.track_window = None    # Set to rect when the mouse drag finishes
+    To initialize tracking, select the object with mouse
 
-        print( "Keys:\n"
-            "    ESC - quit the program\n"
-            "    b - switch to/from backprojection view\n"
-            "To initialize tracking, drag across the object with the mouse\n" )
+Keys:
+-----
+    ESC   - exit
+    b     - toggle back-projected probability visualization
+'''
 
-    def hue_histogram_as_image(self, hist):
-        """ Returns a nice representation of a hue histogram """
+# Python 2/3 compatibility
+from __future__ import print_function
+import sys
+PY3 = sys.version_info[0] == 3
 
-        histimg_hsv = cv.CreateImage( (320,200), 8, 3)
+if PY3:
+    xrange = range
 
-        mybins = cv.CloneMatND(hist.bins)
-        cv.Log(mybins, mybins)
-        (_, hi, _, _) = cv.MinMaxLoc(mybins)
-        cv.ConvertScale(mybins, mybins, 255. / hi)
+import numpy as np
+import cv2
 
-        w,h = cv.GetSize(histimg_hsv)
-        hdims = cv.GetDims(mybins)[0]
-        for x in range(w):
-            xh = (180 * x) / (w - 1)  # hue sweeps from 0-180 across the image
-            val = int(mybins[int(hdims * x / w)] * h / 255)
-            cv.Rectangle( histimg_hsv, (x, 0), (x, h-val), (xh,255,64), -1)
-            cv.Rectangle( histimg_hsv, (x, h-val), (x, h), (xh,255,255), -1)
+# local module
+import video
+from video import presets
 
-        histimg = cv.CreateImage( (320,200), 8, 3)
-        cv.CvtColor(histimg_hsv, histimg, cv.CV_HSV2BGR)
-        return histimg
 
-    def on_mouse(self, event, x, y, flags, param):
-        if event == cv.CV_EVENT_LBUTTONDOWN:
+class App(object):
+    def __init__(self, video_src):
+        self.cam = video.create_capture(video_src, presets['cube'])
+        ret, self.frame = self.cam.read()
+        cv2.namedWindow('camshift')
+        cv2.setMouseCallback('camshift', self.onmouse)
+
+        self.selection = None
+        self.drag_start = None
+        self.show_backproj = False
+        self.track_window = None
+
+    def onmouse(self, event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
             self.drag_start = (x, y)
-        if event == cv.CV_EVENT_LBUTTONUP:
-            self.drag_start = None
-            self.track_window = self.selection
+            self.track_window = None
         if self.drag_start:
             xmin = min(x, self.drag_start[0])
             ymin = min(y, self.drag_start[1])
             xmax = max(x, self.drag_start[0])
             ymax = max(y, self.drag_start[1])
-            self.selection = (xmin, ymin, xmax - xmin, ymax - ymin)
+            self.selection = (xmin, ymin, xmax, ymax)
+        if event == cv2.EVENT_LBUTTONUP:
+            self.drag_start = None
+            self.track_window = (xmin, ymin, xmax - xmin, ymax - ymin)
+
+    def show_hist(self):
+        bin_count = self.hist.shape[0]
+        bin_w = 24
+        img = np.zeros((256, bin_count*bin_w, 3), np.uint8)
+        for i in xrange(bin_count):
+            h = int(self.hist[i])
+            cv2.rectangle(img, (i*bin_w+2, 255), ((i+1)*bin_w-2, 255-h), (int(180.0*i/bin_count), 255, 255), -1)
+        img = cv2.cvtColor(img, cv2.COLOR_HSV2BGR)
+        cv2.imshow('hist', img)
 
     def run(self):
-        hist = cv.CreateHist([180], cv.CV_HIST_ARRAY, [(0,180)], 1 )
-        backproject_mode = False
         while True:
-            frame = cv.QueryFrame( self.capture )
+            ret, self.frame = self.cam.read()
+            vis = self.frame.copy()
+            hsv = cv2.cvtColor(self.frame, cv2.COLOR_BGR2HSV)
+            mask = cv2.inRange(hsv, np.array((0., 60., 32.)), np.array((180., 255., 255.)))
 
-            # Convert to HSV and keep the hue
-            hsv = cv.CreateImage(cv.GetSize(frame), 8, 3)
-            cv.CvtColor(frame, hsv, cv.CV_BGR2HSV)
-            self.hue = cv.CreateImage(cv.GetSize(frame), 8, 1)
-            cv.Split(hsv, self.hue, None, None, None)
+            if self.selection:
+                x0, y0, x1, y1 = self.selection
+                hsv_roi = hsv[y0:y1, x0:x1]
+                mask_roi = mask[y0:y1, x0:x1]
+                hist = cv2.calcHist( [hsv_roi], [0], mask_roi, [16], [0, 180] )
+                cv2.normalize(hist, hist, 0, 255, cv2.NORM_MINMAX)
+                self.hist = hist.reshape(-1)
+                self.show_hist()
 
-            # Compute back projection
-            backproject = cv.CreateImage(cv.GetSize(frame), 8, 1)
+                vis_roi = vis[y0:y1, x0:x1]
+                cv2.bitwise_not(vis_roi, vis_roi)
+                vis[mask == 0] = 0
 
-            # Run the cam-shift
-            cv.CalcArrBackProject( [self.hue], backproject, hist )
-            if self.track_window and is_rect_nonzero(self.track_window):
-                crit = ( cv.CV_TERMCRIT_EPS | cv.CV_TERMCRIT_ITER, 10, 1)
-                (iters, (area, value, rect), track_box) = cv.CamShift(backproject, self.track_window, crit)
-                self.track_window = rect
+            if self.track_window and self.track_window[2] > 0 and self.track_window[3] > 0:
+                self.selection = None
+                prob = cv2.calcBackProject([hsv], [0], self.hist, [0, 180], 1)
+                prob &= mask
+                term_crit = ( cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 1 )
+                track_box, self.track_window = cv2.CamShift(prob, self.track_window, term_crit)
 
-            # If mouse is pressed, highlight the current selected rectangle
-            # and recompute the histogram
+                if self.show_backproj:
+                    vis[:] = prob[...,np.newaxis]
+                try:
+                    cv2.ellipse(vis, track_box, (0, 0, 255), 2)
+                except:
+                    print(track_box)
 
-            if self.drag_start and is_rect_nonzero(self.selection):
-                sub = cv.GetSubRect(frame, self.selection)
-                save = cv.CloneMat(sub)
-                cv.ConvertScale(frame, frame, 0.5)
-                cv.Copy(save, sub)
-                x,y,w,h = self.selection
-                cv.Rectangle(frame, (x,y), (x+w,y+h), (255,255,255))
+            cv2.imshow('camshift', vis)
 
-                sel = cv.GetSubRect(self.hue, self.selection )
-                cv.CalcArrHist( [sel], hist, 0)
-                (_, max_val, _, _) = cv.GetMinMaxHistValue( hist)
-                if max_val != 0:
-                    cv.ConvertScale(hist.bins, hist.bins, 255. / max_val)
-            elif self.track_window and is_rect_nonzero(self.track_window):
-                cv.EllipseBox( frame, track_box, cv.CV_RGB(255,0,0), 3, cv.CV_AA, 0 )
-
-            if not backproject_mode:
-                cv.ShowImage( "CamShiftDemo", frame )
-            else:
-                cv.ShowImage( "CamShiftDemo", backproject)
-            cv.ShowImage( "Histogram", self.hue_histogram_as_image(hist))
-
-            c = cv.WaitKey(7) % 0x100
-            if c == 27:
+            ch = cv2.waitKey(5)
+            if ch == 27:
                 break
-            elif c == ord("b"):
-                backproject_mode = not backproject_mode
+            if ch == ord('b'):
+                self.show_backproj = not self.show_backproj
+        cv2.destroyAllWindows()
 
-if __name__=="__main__":
-    demo = CamShiftDemo()
-    demo.run()
-    cv.DestroyAllWindows()
+
+if __name__ == '__main__':
+    import sys
+    try:
+        video_src = sys.argv[1]
+    except:
+        video_src = 0
+    print(__doc__)
+    App(video_src).run()

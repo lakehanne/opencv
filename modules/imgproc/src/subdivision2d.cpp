@@ -275,6 +275,8 @@ void Subdiv2D::deletePoint(int vidx)
 
 int Subdiv2D::locate(Point2f pt, int& _edge, int& _vertex)
 {
+    CV_INSTRUMENT_REGION()
+
     int vertex = 0;
 
     int i, maxEdges = (int)(qedges.size() * 4);
@@ -409,6 +411,8 @@ isPtInCircle3( Point2f pt, Point2f a, Point2f b, Point2f c)
 
 int Subdiv2D::insert(Point2f pt)
 {
+    CV_INSTRUMENT_REGION()
+
     int curr_point = 0, curr_edge = 0, deleted_edge = 0;
     int location = locate( pt, curr_edge, curr_point );
 
@@ -477,14 +481,18 @@ int Subdiv2D::insert(Point2f pt)
     return curr_point;
 }
 
-void Subdiv2D::insert(const vector<Point2f>& ptvec)
+void Subdiv2D::insert(const std::vector<Point2f>& ptvec)
 {
+    CV_INSTRUMENT_REGION()
+
     for( size_t i = 0; i < ptvec.size(); i++ )
         insert(ptvec[i]);
 }
 
 void Subdiv2D::initDelaunay( Rect rect )
 {
+    CV_INSTRUMENT_REGION()
+
     float big_coord = 3.f * MAX( rect.width, rect.height );
     float rx = (float)rect.x;
     float ry = (float)rect.y;
@@ -644,6 +652,8 @@ isRightOf2( const Point2f& pt, const Point2f& org, const Point2f& diff )
 
 int Subdiv2D::findNearest(Point2f pt, Point2f* nearestPt)
 {
+    CV_INSTRUMENT_REGION()
+
     if( !validGeometry )
         calcVoronoi();
 
@@ -706,7 +716,7 @@ int Subdiv2D::findNearest(Point2f pt, Point2f* nearestPt)
     return vertex;
 }
 
-void Subdiv2D::getEdgeList(vector<Vec4f>& edgeList) const
+void Subdiv2D::getEdgeList(std::vector<Vec4f>& edgeList) const
 {
     edgeList.clear();
 
@@ -723,11 +733,31 @@ void Subdiv2D::getEdgeList(vector<Vec4f>& edgeList) const
     }
 }
 
-void Subdiv2D::getTriangleList(vector<Vec6f>& triangleList) const
+void Subdiv2D::getLeadingEdgeList(std::vector<int>& leadingEdgeList) const
+{
+    leadingEdgeList.clear();
+    int i, total = (int)(qedges.size()*4);
+    std::vector<bool> edgemask(total, false);
+
+    for( i = 4; i < total; i += 2 )
+    {
+        if( edgemask[i] )
+            continue;
+        int edge = i;
+        edgemask[edge] = true;
+        edge = getEdge(edge, NEXT_AROUND_LEFT);
+        edgemask[edge] = true;
+        edge = getEdge(edge, NEXT_AROUND_LEFT);
+        edgemask[edge] = true;
+        leadingEdgeList.push_back(i);
+    }
+}
+
+void Subdiv2D::getTriangleList(std::vector<Vec6f>& triangleList) const
 {
     triangleList.clear();
     int i, total = (int)(qedges.size()*4);
-    vector<bool> edgemask(total, false);
+    std::vector<bool> edgemask(total, false);
 
     for( i = 4; i < total; i += 2 )
     {
@@ -747,15 +777,15 @@ void Subdiv2D::getTriangleList(vector<Vec6f>& triangleList) const
     }
 }
 
-void Subdiv2D::getVoronoiFacetList(const vector<int>& idx,
-                                   CV_OUT vector<vector<Point2f> >& facetList,
-                                   CV_OUT vector<Point2f>& facetCenters)
+void Subdiv2D::getVoronoiFacetList(const std::vector<int>& idx,
+                                   CV_OUT std::vector<std::vector<Point2f> >& facetList,
+                                   CV_OUT std::vector<Point2f>& facetCenters)
 {
     calcVoronoi();
     facetList.clear();
     facetCenters.clear();
 
-    vector<Point2f> buf;
+    std::vector<Point2f> buf;
 
     size_t i, total;
     if( idx.empty() )

@@ -47,6 +47,7 @@
 #include <set>
 #include <list>
 #include <numeric>
+#include <map>
 
 #include "precomp.hpp"
 
@@ -61,10 +62,10 @@ public:
     squareSize = 1.0f;
     maxRectifiedDistance = (float)(squareSize / 2.0);
   }
-  void findGrid(const std::vector<cv::Point2f> points, cv::Size patternSize, std::vector<cv::Point2f>& centers);
+  void findGrid(const std::vector<cv::Point2f> &points, cv::Size patternSize, std::vector<cv::Point2f>& centers);
 
   //cluster 2d points by geometric coordinates
-  void hierarchicalClustering(const std::vector<cv::Point2f> points, const cv::Size &patternSize, std::vector<cv::Point2f> &patternPoints);
+  void hierarchicalClustering(const std::vector<cv::Point2f> &points, const cv::Size &patternSize, std::vector<cv::Point2f> &patternPoints);
 private:
   void findCorners(const std::vector<cv::Point2f> &hull2f, std::vector<cv::Point2f> &corners);
   void findOutsideCorners(const std::vector<cv::Point2f> &corners, std::vector<cv::Point2f> &outsideCorners);
@@ -118,35 +119,11 @@ struct Path
   }
 };
 
-struct CirclesGridFinderParameters
-{
-  CirclesGridFinderParameters();
-  cv::Size2f densityNeighborhoodSize;
-  float minDensity;
-  int kmeansAttempts;
-  int minDistanceToAddKeypoint;
-  int keypointScale;
-  float minGraphConfidence;
-  float vertexGain;
-  float vertexPenalty;
-  float existingVertexGain;
-  float edgeGain;
-  float edgePenalty;
-  float convexHullFactor;
-  float minRNGEdgeSwitchDist;
-
-  enum GridType
-  {
-    SYMMETRIC_GRID, ASYMMETRIC_GRID
-  };
-  GridType gridType;
-};
-
 class CirclesGridFinder
 {
 public:
   CirclesGridFinder(cv::Size patternSize, const std::vector<cv::Point2f> &testKeypoints,
-                    const CirclesGridFinderParameters &parameters = CirclesGridFinderParameters());
+                    const cv::CirclesGridFinderParameters &parameters = cv::CirclesGridFinderParameters());
   bool findHoles();
   static cv::Mat rectifyGrid(cv::Size detectedGridSize, const std::vector<cv::Point2f>& centers, const std::vector<
       cv::Point2f> &keypoint, std::vector<cv::Point2f> &warpedKeypoints);
@@ -210,7 +187,7 @@ private:
   std::vector<std::vector<size_t> > *smallHoles;
 
   const cv::Size_<size_t> patternSize;
-  CirclesGridFinderParameters parameters;
+  cv::CirclesGridFinderParameters parameters;
 
   CirclesGridFinder& operator=(const CirclesGridFinder&);
   CirclesGridFinder(const CirclesGridFinder&);

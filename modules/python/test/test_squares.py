@@ -31,7 +31,7 @@ def find_squares(img):
                 bin = cv2.dilate(bin, None)
             else:
                 retval, bin = cv2.threshold(gray, thrs, 255, cv2.THRESH_BINARY)
-            contours, hierarchy = cv2.findContours(bin, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+            bin, contours, hierarchy = cv2.findContours(bin, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
             for cnt in contours:
                 cnt_len = cv2.arcLength(cnt, True)
                 cnt = cv2.approxPolyDP(cnt, 0.02*cnt_len, True)
@@ -61,7 +61,7 @@ class squares_test(NewOpenCVTests):
 
     def test_squares(self):
 
-        img = self.get_sample('samples/cpp/pic1.png')
+        img = self.get_sample('samples/data/pic1.png')
         squares = find_squares(img)
 
         testSquares = [

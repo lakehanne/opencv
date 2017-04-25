@@ -11,7 +11,7 @@ import numpy as np
 import cv2
 
 def detect(img, cascade):
-    rects = cascade.detectMultiScale(img, scaleFactor=1.3, minNeighbors=2, minSize=(30, 30),
+    rects = cascade.detectMultiScale(img, scaleFactor=1.3, minNeighbors=4, minSize=(30, 30),
                                      flags=cv2.CASCADE_SCALE_IMAGE)
     if len(rects) == 0:
         return []
@@ -31,7 +31,7 @@ class facedetect_test(NewOpenCVTests):
         cascade = cv2.CascadeClassifier(cascade_fn)
         nested = cv2.CascadeClassifier(nested_fn)
 
-        samples = ['samples/c/lena.jpg', 'cv/cascadeandhog/images/mona-lisa.png']
+        samples = ['samples/data/lena.jpg', 'cv/cascadeandhog/images/mona-lisa.png']
 
         faces = []
         eyes = []

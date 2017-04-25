@@ -4,10 +4,10 @@
  * @author OpenCV team
  */
 
-#include "opencv2/highgui/highgui.hpp"
-#include "opencv2/imgproc/imgproc.hpp"
+#include "opencv2/imgcodecs.hpp"
+#include "opencv2/highgui.hpp"
+#include "opencv2/imgproc.hpp"
 #include <iostream>
-#include <stdio.h>
 
 using namespace cv;
 using namespace std;
@@ -30,7 +30,7 @@ int main( int, char** argv )
   Mat src, warp_dst, warp_rotate_dst;
 
   /// Load the image
-  src = imread( argv[1], 1 );
+  src = imread( argv[1], IMREAD_COLOR );
 
   /// Set the dst image the same type and size as src
   warp_dst = Mat::zeros( src.rows, src.cols, src.type() );

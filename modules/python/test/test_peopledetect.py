@@ -24,7 +24,7 @@ class peopledetect_test(NewOpenCVTests):
         hog = cv2.HOGDescriptor()
         hog.setSVMDetector( cv2.HOGDescriptor_getDefaultPeopleDetector() )
 
-        dirPath = 'samples/gpu/'
+        dirPath = 'samples/data/'
         samples = ['basketball1.png', 'basketball2.png']
 
         testPeople = [

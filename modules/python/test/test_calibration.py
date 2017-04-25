@@ -21,9 +21,9 @@ class calibration_test(NewOpenCVTests):
         img_names = []
         for i in range(1, 15):
             if i < 10:
-                img_names.append('samples/cpp/left0{}.jpg'.format(str(i)))
+                img_names.append('samples/data/left0{}.jpg'.format(str(i)))
             elif i != 10:
-                img_names.append('samples/cpp/left{}.jpg'.format(str(i)))
+                img_names.append('samples/data/left{}.jpg'.format(str(i)))
 
         square_size = 1.0
         pattern_size = (9, 6)
@@ -57,7 +57,7 @@ class calibration_test(NewOpenCVTests):
 
         eps = 0.01
         normCamEps = 10.0
-        normDistEps = 0.001
+        normDistEps = 0.05
 
         cameraMatrixTest = [[ 532.80992189,    0.,          342.4952186 ],
          [   0.,         532.93346422,  233.8879292 ],

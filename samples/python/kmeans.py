@@ -1,60 +1,50 @@
-#!/usr/bin/python
-import urllib2
-import cv2.cv as cv
-from random import randint
-MAX_CLUSTERS = 5
+#!/usr/bin/env python
 
-if __name__ == "__main__":
+'''
+K-means clusterization sample.
+Usage:
+   kmeans.py
 
-    color_tab = [
-        cv.CV_RGB(255, 0,0),
-        cv.CV_RGB(0, 255, 0),
-        cv.CV_RGB(100, 100, 255),
-        cv.CV_RGB(255, 0,255),
-        cv.CV_RGB(255, 255, 0)]
-    img = cv.CreateImage((500, 500), 8, 3)
-    rng = cv.RNG(-1)
+Keyboard shortcuts:
+   ESC   - exit
+   space - generate new distribution
+'''
 
-    cv.NamedWindow("clusters", 1)
+# Python 2/3 compatibility
+from __future__ import print_function
+
+import numpy as np
+import cv2
+
+from gaussian_mix import make_gaussians
+
+if __name__ == '__main__':
+    cluster_n = 5
+    img_size = 512
+
+    print(__doc__)
+
+    # generating bright palette
+    colors = np.zeros((1, cluster_n, 3), np.uint8)
+    colors[0,:] = 255
+    colors[0,:,0] = np.arange(0, 180, 180.0/cluster_n)
+    colors = cv2.cvtColor(colors, cv2.COLOR_HSV2BGR)[0]
 
     while True:
-        cluster_count = randint(2, MAX_CLUSTERS)
-        sample_count = randint(1, 1000)
-        points = cv.CreateMat(sample_count, 1, cv.CV_32FC2)
-        clusters = cv.CreateMat(sample_count, 1, cv.CV_32SC1)
+        print('sampling distributions...')
+        points, _ = make_gaussians(cluster_n, img_size)
 
-        # generate random sample from multigaussian distribution
-        for k in range(cluster_count):
-            center = (cv.RandInt(rng)%img.width, cv.RandInt(rng)%img.height)
-            first = k*sample_count/cluster_count
-            last = sample_count
-            if k != cluster_count:
-                last = (k+1)*sample_count/cluster_count
+        term_crit = (cv2.TERM_CRITERIA_EPS, 30, 0.1)
+        ret, labels, centers = cv2.kmeans(points, cluster_n, None, term_crit, 10, 0)
 
-            point_chunk = cv.GetRows(points, first, last)
+        img = np.zeros((img_size, img_size, 3), np.uint8)
+        for (x, y), label in zip(np.int32(points), labels.ravel()):
+            c = list(map(int, colors[label]))
 
-            cv.RandArr(rng, point_chunk, cv.CV_RAND_NORMAL,
-                       cv.Scalar(center[0], center[1], 0, 0),
-                       cv.Scalar(img.width*0.1, img.height*0.1, 0, 0))
+            cv2.circle(img, (x, y), 1, c, -1)
 
-
-        # shuffle samples
-        cv.RandShuffle(points, rng)
-
-        cv.KMeans2(points, cluster_count, clusters,
-                   (cv.CV_TERMCRIT_EPS + cv.CV_TERMCRIT_ITER, 10, 1.0))
-
-        cv.Zero(img)
-
-        for i in range(sample_count):
-            cluster_idx = int(clusters[i, 0])
-            pt = (cv.Round(points[i, 0][0]), cv.Round(points[i, 0][1]))
-            cv.Circle(img, pt, 2, color_tab[cluster_idx], cv.CV_FILLED, cv.CV_AA, 0)
-
-        cv.ShowImage("clusters", img)
-
-        key = cv.WaitKey(0) % 0x100
-        if key in [27, ord('q'), ord('Q')]:
+        cv2.imshow('gaussian mixture', img)
+        ch = cv2.waitKey(0)
+        if ch == 27:
             break
-
-    cv.DestroyWindow("clusters")
+    cv2.destroyAllWindows()

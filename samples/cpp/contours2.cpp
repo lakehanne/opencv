@@ -1,5 +1,5 @@
-#include "opencv2/imgproc/imgproc.hpp"
-#include "opencv2/highgui/highgui.hpp"
+#include "opencv2/imgproc.hpp"
+#include "opencv2/highgui.hpp"
 #include <math.h>
 #include <iostream>
 
@@ -28,19 +28,20 @@ static void on_trackbar(int, void*)
     Mat cnt_img = Mat::zeros(w, w, CV_8UC3);
     int _levels = levels - 3;
     drawContours( cnt_img, contours, _levels <= 0 ? 3 : -1, Scalar(128,255,255),
-                  3, CV_AA, hierarchy, std::abs(_levels) );
+                  3, LINE_AA, hierarchy, std::abs(_levels) );
 
     imshow("contours", cnt_img);
 }
 
-int main( int argc, char**)
+int main( int argc, char** argv)
 {
-    Mat img = Mat::zeros(w, w, CV_8UC1);
-    if(argc > 1)
+    cv::CommandLineParser parser(argc, argv, "{help h||}");
+    if (parser.has("help"))
     {
         help();
-        return -1;
+        return 0;
     }
+    Mat img = Mat::zeros(w, w, CV_8UC1);
     //Draw 6 faces
     for( int i = 0; i < 6; i++ )
     {

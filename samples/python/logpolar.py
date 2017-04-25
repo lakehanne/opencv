@@ -1,45 +1,39 @@
-#!/usr/bin/python
-import sys
-import urllib2
-import cv2.cv as cv
+#!/usr/bin/env python
 
-src=None
-dst=None
-src2=None
+'''
+plots image as logPolar and linearPolar
 
-def on_mouse(event, x, y, flags, param):
+Usage:
+    logpolar.py
 
-    if not src:
-        return
+Keys:
+    ESC    - exit
+'''
 
-    if event==cv.CV_EVENT_LBUTTONDOWN:
-        cv.LogPolar(src, dst, (x, y), 40, cv.CV_INTER_LINEAR + cv.CV_WARP_FILL_OUTLIERS)
-        cv.LogPolar(dst, src2, (x, y), 40, cv.CV_INTER_LINEAR + cv.CV_WARP_FILL_OUTLIERS + cv.CV_WARP_INVERSE_MAP)
-        cv.ShowImage("log-polar", dst)
-        cv.ShowImage("inverse log-polar", src2)
+# Python 2/3 compatibility
+from __future__ import print_function
 
-if __name__ == "__main__":
+import cv2
 
-    if len(sys.argv) > 1:
-        src = cv.LoadImage( sys.argv[1], cv.CV_LOAD_IMAGE_COLOR)
-    else:
-        url = 'https://raw.github.com/Itseez/opencv/master/samples/c/fruits.jpg'
-        filedata = urllib2.urlopen(url).read()
-        imagefiledata = cv.CreateMatHeader(1, len(filedata), cv.CV_8UC1)
-        cv.SetData(imagefiledata, filedata, len(filedata))
-        src = cv.DecodeImage(imagefiledata, cv.CV_LOAD_IMAGE_COLOR)
+if __name__ == '__main__':
+    print(__doc__)
 
-    cv.NamedWindow("original", 1)
-    cv.NamedWindow("log-polar", 1)
-    cv.NamedWindow("inverse log-polar", 1)
+    import sys
+    try:
+        fn = sys.argv[1]
+    except IndexError:
+        fn = '../data/fruits.jpg'
 
+    img = cv2.imread(fn)
+    if img is None:
+        print('Failed to load image file:', fn)
+        sys.exit(1)
 
-    dst = cv.CreateImage((256, 256), 8, 3)
-    src2 = cv.CreateImage(cv.GetSize(src), 8, 3)
+    img2 = cv2.logPolar(img, (img.shape[0]/2, img.shape[1]/2), 40, cv2.WARP_FILL_OUTLIERS)
+    img3 = cv2.linearPolar(img, (img.shape[0]/2, img.shape[1]/2), 40, cv2.WARP_FILL_OUTLIERS)
 
-    cv.SetMouseCallback("original", on_mouse)
-    on_mouse(cv.CV_EVENT_LBUTTONDOWN, src.width/2, src.height/2, None, None)
+    cv2.imshow('before', img)
+    cv2.imshow('logpolar', img2)
+    cv2.imshow('linearpolar', img3)
 
-    cv.ShowImage("original", src)
-    cv.WaitKey()
-    cv.DestroyAllWindows()
+    cv2.waitKey(0)

@@ -34,7 +34,7 @@ def sample_line(p1, p2, n, noise=0.0):
     t = np.random.rand(n,1)
     return p1 + (p2-p1)*t + np.random.normal(size=(n, 2))*noise
 
-dist_func_names = ['CV_DIST_L2', 'CV_DIST_L1', 'CV_DIST_L12', 'CV_DIST_FAIR', 'CV_DIST_WELSCH', 'CV_DIST_HUBER']
+dist_func_names = ['DIST_L2', 'DIST_L1', 'DIST_L12', 'DIST_FAIR', 'DIST_WELSCH', 'DIST_HUBER']
 
 class fitline_test(NewOpenCVTests):
 
@@ -53,7 +53,7 @@ class fitline_test(NewOpenCVTests):
         lines = []
 
         for name in dist_func_names:
-            func = getattr(cv2.cv, name)
+            func = getattr(cv2, name)
             vx, vy, cx, cy = cv2.fitLine(np.float32(points), func, 0, 0.01, 0.01)
             line = [float(vx), float(vy), float(cx), float(cy)]
             lines.append(line)

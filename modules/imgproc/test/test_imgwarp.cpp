@@ -344,7 +344,7 @@ static void test_remap( const Mat& src, Mat& dst, const Mat& mapx, const Mat& ma
     int x, y, k;
     int drows = dst.rows, dcols = dst.cols;
     int srows = src.rows, scols = src.cols;
-    uchar* sptr0 = src.data;
+    const uchar* sptr0 = src.ptr();
     int depth = src.depth(), cn = src.channels();
     int elem_size = (int)src.elemSize();
     int step = (int)(src.step / CV_ELEM_SIZE(depth));
@@ -1410,7 +1410,7 @@ static void check_resize_area(const Mat& expected, const Mat& actual, double tol
             }
     }
 
-    ASSERT_EQ(norm(one_channel_diff, cv::NORM_INF), 0);
+    ASSERT_EQ(0, norm(one_channel_diff, cv::NORM_INF));
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1596,5 +1596,245 @@ TEST(Imgproc_Undistort, accuracy) { CV_UndistortTest test; test.safe_run(); }
 TEST(Imgproc_InitUndistortMap, accuracy) { CV_UndistortMapTest test; test.safe_run(); }
 TEST(Imgproc_GetRectSubPix, accuracy) { CV_GetRectSubPixTest test; test.safe_run(); }
 TEST(Imgproc_GetQuadSubPix, accuracy) { CV_GetQuadSubPixTest test; test.safe_run(); }
+
+//////////////////////////////////////////////////////////////////////////
+
+template <typename T, typename WT>
+struct IntCast
+{
+    T operator() (WT val) const
+    {
+        return cv::saturate_cast<T>(val >> 2);
+    }
+};
+
+template <typename T, typename WT>
+struct FltCast
+{
+    T operator() (WT val) const
+    {
+        return cv::saturate_cast<T>(val * 0.25);
+    }
+};
+
+template <typename T, typename WT, int one, typename CastOp>
+void resizeArea(const cv::Mat & src, cv::Mat & dst)
+{
+    int cn = src.channels();
+    CastOp castOp;
+
+    for (int y = 0; y < dst.rows; ++y)
+    {
+        const T * sptr0 = src.ptr<T>(y << 1);
+        const T * sptr1 = src.ptr<T>((y << 1) + 1);
+        T * dptr = dst.ptr<T>(y);
+
+        for (int x = 0; x < dst.cols * cn; x += cn)
+        {
+            int x1 = x << 1;
+
+            for (int c = 0; c < cn; ++c)
+            {
+                WT sum = WT(sptr0[x1 + c]) + WT(sptr0[x1 + c + cn]);
+                sum += WT(sptr1[x1 + c]) + WT(sptr1[x1 + c + cn]) + (WT)(one);
+
+                dptr[x + c] = castOp(sum);
+            }
+        }
+    }
+}
+
+TEST(Resize, Area_half)
+{
+    const int size = 1000;
+    int types[] = { CV_8UC1, CV_8UC4,
+                    CV_16UC1, CV_16UC4,
+                    CV_16SC1, CV_16SC3, CV_16SC4,
+                    CV_32FC1, CV_32FC4 };
+
+    cv::RNG rng(17);
+
+    for (int i = 0, _size = sizeof(types) / sizeof(types[0]); i < _size; ++i)
+    {
+        int type = types[i], depth = CV_MAT_DEPTH(type), cn = CV_MAT_CN(type);
+        const float eps = depth <= CV_32S ? 0 : 7e-5f;
+
+        SCOPED_TRACE(depth);
+        SCOPED_TRACE(cn);
+
+        cv::Mat src(size, size, type), dst_actual(size >> 1, size >> 1, type),
+            dst_reference(size >> 1, size >> 1, type);
+
+        rng.fill(src, cv::RNG::UNIFORM, -1000, 1000, true);
+
+        if (depth == CV_8U)
+            resizeArea<uchar, ushort, 2, IntCast<uchar, ushort> >(src, dst_reference);
+        else if (depth == CV_16U)
+            resizeArea<ushort, uint, 2, IntCast<ushort, uint> >(src, dst_reference);
+        else if (depth == CV_16S)
+            resizeArea<short, int, 2, IntCast<short, int> >(src, dst_reference);
+        else if (depth == CV_32F)
+            resizeArea<float, float, 0, FltCast<float, float> >(src, dst_reference);
+        else
+            CV_Assert(0);
+
+        cv::resize(src, dst_actual, dst_actual.size(), 0, 0, cv::INTER_AREA);
+
+        ASSERT_GE(eps, cvtest::norm(dst_reference, dst_actual, cv::NORM_INF));
+    }
+}
+
+TEST(Imgproc_Warp, multichannel)
+{
+    static const int inter_types[] = {INTER_NEAREST, INTER_AREA, INTER_CUBIC,
+                                      INTER_LANCZOS4, INTER_LINEAR};
+    static const int inter_n = sizeof(inter_types) / sizeof(int);
+
+    static const int border_types[] = {BORDER_CONSTANT, BORDER_DEFAULT,
+                                       BORDER_REFLECT, BORDER_REPLICATE,
+                                       BORDER_WRAP, BORDER_WRAP};
+    static const int border_n = sizeof(border_types) / sizeof(int);
+
+    RNG& rng = theRNG();
+    for( int iter = 0; iter < 100; iter++ )
+    {
+        int inter = inter_types[rng.uniform(0, inter_n)];
+        int border = border_types[rng.uniform(0, border_n)];
+        int width = rng.uniform(3, 333);
+        int height = rng.uniform(3, 333);
+        int cn = rng.uniform(1, 15);
+        Mat src(height, width, CV_8UC(cn)), dst;
+        //randu(src, 0, 256);
+        src.setTo(0.);
+
+        Mat rot = getRotationMatrix2D(Point2f(0.f, 0.f), 1.0, 1.0);
+        warpAffine(src, dst, rot, src.size(), inter, border);
+        ASSERT_EQ(0.0, norm(dst, NORM_INF));
+        Mat rot2 = Mat::eye(3, 3, rot.type());
+        rot.copyTo(rot2.rowRange(0, 2));
+        warpPerspective(src, dst, rot2, src.size(), inter, border);
+        ASSERT_EQ(0.0, norm(dst, NORM_INF));
+    }
+}
+
+TEST(Imgproc_GetAffineTransform, singularity)
+{
+    Point2f A_sample[3];
+    A_sample[0] = Point2f(8.f, 9.f);
+    A_sample[1] = Point2f(40.f, 41.f);
+    A_sample[2] = Point2f(47.f, 48.f);
+    Point2f B_sample[3];
+    B_sample[0] = Point2f(7.37465f, 11.8295f);
+    B_sample[1] = Point2f(15.0113f, 12.8994f);
+    B_sample[2] = Point2f(38.9943f, 9.56297f);
+    Mat trans = getAffineTransform(A_sample, B_sample);
+    ASSERT_EQ(0.0, norm(trans, NORM_INF));
+}
+
+TEST(Imgproc_Remap, DISABLED_memleak)
+{
+    Mat src;
+    const int N = 400;
+    src.create(N, N, CV_8U);
+    randu(src, 0, 256);
+    Mat map_x, map_y, dst;
+    dst.create( src.size(), src.type() );
+    map_x.create( src.size(), CV_32FC1 );
+    map_y.create( src.size(), CV_32FC1 );
+    randu(map_x, 0., N+0.);
+    randu(map_y, 0., N+0.);
+
+    for( int iter = 0; iter < 10000; iter++ )
+    {
+        if(iter % 100 == 0)
+        {
+            putchar('.');
+            fflush(stdout);
+        }
+        remap(src, dst, map_x, map_y, CV_INTER_LINEAR);
+    }
+}
+
+
+TEST(Imgproc_linearPolar, identity)
+{
+    const int N = 33;
+    Mat in(N, N, CV_8UC3, Scalar(255, 0, 0));
+    in(cv::Rect(N/3, N/3, N/3, N/3)).setTo(Scalar::all(255));
+    cv::blur(in, in, Size(5, 5));
+    cv::blur(in, in, Size(5, 5));
+
+    Mat src = in.clone();
+    Mat dst;
+
+    Rect roi = Rect(0, 0, in.cols - ((N+19)/20), in.rows);
+
+    for (int i = 1; i <= 5; i++)
+    {
+        linearPolar(src, dst,
+            Point2f((N-1) * 0.5f, (N-1) * 0.5f), N * 0.5f,
+            CV_WARP_FILL_OUTLIERS | CV_INTER_LINEAR | CV_WARP_INVERSE_MAP);
+
+        linearPolar(dst, src,
+            Point2f((N-1) * 0.5f, (N-1) * 0.5f), N * 0.5f,
+            CV_WARP_FILL_OUTLIERS | CV_INTER_LINEAR);
+
+        double psnr = cvtest::PSNR(in(roi), src(roi));
+        EXPECT_LE(25, psnr) << "iteration=" << i;
+    }
+
+#if 0
+    Mat all(N*2+2,N*2+2, src.type(), Scalar(0,0,255));
+    in.copyTo(all(Rect(0,0,N,N)));
+    src.copyTo(all(Rect(0,N+1,N,N)));
+    src.copyTo(all(Rect(N+1,0,N,N)));
+    dst.copyTo(all(Rect(N+1,N+1,N,N)));
+    imwrite("linearPolar.png", all);
+    imshow("input", in); imshow("result", dst); imshow("restore", src); imshow("all", all);
+    cv::waitKey();
+#endif
+}
+
+
+TEST(Imgproc_logPolar, identity)
+{
+    const int N = 33;
+    Mat in(N, N, CV_8UC3, Scalar(255, 0, 0));
+    in(cv::Rect(N/3, N/3, N/3, N/3)).setTo(Scalar::all(255));
+    cv::blur(in, in, Size(5, 5));
+    cv::blur(in, in, Size(5, 5));
+
+    Mat src = in.clone();
+    Mat dst;
+
+    Rect roi = Rect(0, 0, in.cols - ((N+19)/20), in.rows);
+
+    double M = N/log(N * 0.5f);
+    for (int i = 1; i <= 5; i++)
+    {
+        logPolar(src, dst,
+            Point2f((N-1) * 0.5f, (N-1) * 0.5f), M,
+            CV_WARP_FILL_OUTLIERS | CV_INTER_LINEAR | CV_WARP_INVERSE_MAP);
+
+        logPolar(dst, src,
+            Point2f((N-1) * 0.5f, (N-1) * 0.5f), M,
+            CV_WARP_FILL_OUTLIERS | CV_INTER_LINEAR);
+
+        double psnr = cvtest::PSNR(in(roi), src(roi));
+        EXPECT_LE(25, psnr) << "iteration=" << i;
+    }
+
+#if 0
+    Mat all(N*2+2,N*2+2, src.type(), Scalar(0,0,255));
+    in.copyTo(all(Rect(0,0,N,N)));
+    src.copyTo(all(Rect(0,N+1,N,N)));
+    src.copyTo(all(Rect(N+1,0,N,N)));
+    dst.copyTo(all(Rect(N+1,N+1,N,N)));
+    imwrite("logPolar.png", all);
+    imshow("input", in); imshow("result", dst); imshow("restore", src); imshow("all", all);
+    cv::waitKey();
+#endif
+}
+
 
 /* End of file. */

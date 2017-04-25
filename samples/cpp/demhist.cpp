@@ -1,5 +1,7 @@
-#include "opencv2/imgproc/imgproc.hpp"
-#include "opencv2/highgui/highgui.hpp"
+#include "opencv2/core/utility.hpp"
+#include "opencv2/imgproc.hpp"
+#include "opencv2/imgcodecs.hpp"
+#include "opencv2/highgui.hpp"
 
 #include <iostream>
 
@@ -43,7 +45,7 @@ static void updateBrightnessContrast( int /*arg*/, void* )
     calcHist(&dst, 1, 0, Mat(), hist, 1, &histSize, 0);
     Mat histImage = Mat::ones(200, 320, CV_8U)*255;
 
-    normalize(hist, hist, 0, histImage.rows, CV_MINMAX, CV_32F);
+    normalize(hist, hist, 0, histImage.rows, NORM_MINMAX, CV_32F);
 
     histImage = Scalar::all(255);
     int binW = cvRound((double)histImage.cols/histSize);
@@ -57,20 +59,23 @@ static void updateBrightnessContrast( int /*arg*/, void* )
 static void help()
 {
     std::cout << "\nThis program demonstrates the use of calcHist() -- histogram creation.\n"
-              << "Usage: \n" << "demhist [image_name -- Defaults to baboon.jpg]" << std::endl;
+              << "Usage: \n" << "demhist [image_name -- Defaults to ../data/baboon.jpg]" << std::endl;
 }
 
 const char* keys =
 {
-    "{1| |baboon.jpg|input image file}"
+    "{help h||}{@image|../data/baboon.jpg|input image file}"
 };
 
 int main( int argc, const char** argv )
 {
-    help();
-
     CommandLineParser parser(argc, argv, keys);
-    string inputImage = parser.get<string>("1");
+    if (parser.has("help"))
+    {
+        help();
+        return 0;
+    }
+    string inputImage = parser.get<string>(0);
 
     // Load the source image. HighGUI use.
     image = imread( inputImage, 0 );

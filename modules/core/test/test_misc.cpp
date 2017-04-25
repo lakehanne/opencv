@@ -3,29 +3,7 @@
 using namespace cv;
 using namespace std;
 
-TEST(Core_Drawing, _914)
-{
-    const int rows = 256;
-    const int cols = 256;
-
-    Mat img(rows, cols, CV_8UC1, Scalar(255));
-
-    line(img, Point(0, 10), Point(255, 10), Scalar(0), 2, 4);
-    line(img, Point(-5, 20), Point(260, 20), Scalar(0), 2, 4);
-    line(img, Point(10, 0), Point(10, 255), Scalar(0), 2, 4);
-
-    double x0 = 0.0/pow(2.0, -2.0);
-    double x1 = 255.0/pow(2.0, -2.0);
-    double y = 30.5/pow(2.0, -2.0);
-
-    line(img, Point(int(x0), int(y)), Point(int(x1), int(y)), Scalar(0), 2, 4, 2);
-
-    int pixelsDrawn = rows*cols - countNonZero(img);
-    ASSERT_EQ( (3*rows + cols)*3 - 3*9, pixelsDrawn);
-}
-
-
-TEST(Core_OutputArraySreate, _1997)
+TEST(Core_OutputArrayCreate, _1997)
 {
     struct local {
         static void create(OutputArray arr, Size submatSize, int type)
@@ -49,22 +27,121 @@ TEST(Core_SaturateCast, NegativeNotClipped)
     ASSERT_EQ(0xffffffff, val);
 }
 
-TEST(Core_Drawing, polylines_empty)
+template<typename T, typename U>
+static double maxAbsDiff(const T &t, const U &u)
 {
-    Mat img(100, 100, CV_8UC1, Scalar(0));
-    vector<Point> pts; // empty
-    polylines(img, pts, false, Scalar(255));
-    int cnt = countNonZero(img);
-    ASSERT_EQ(cnt, 0);
+  Mat_<double> d;
+  absdiff(t, u, d);
+  double ret;
+  minMaxLoc(d, NULL, &ret);
+  return ret;
 }
 
-TEST(Core_Drawing, polylines)
+TEST(Core_OutputArrayAssign, _Matxd_Matd)
 {
-    Mat img(100, 100, CV_8UC1, Scalar(0));
-    vector<Point> pts;
-    pts.push_back(Point(0, 0));
-    pts.push_back(Point(20, 0));
-    polylines(img, pts, false, Scalar(255));
-    int cnt = countNonZero(img);
-    ASSERT_EQ(cnt, 21);
+    Mat expected = (Mat_<double>(2,3) << 1, 2, 3, .1, .2, .3);
+    Matx23d actualx;
+
+    {
+        OutputArray oa(actualx);
+        oa.assign(expected);
+    }
+
+    Mat actual = (Mat) actualx;
+
+    EXPECT_LE(maxAbsDiff(expected, actual), 0.0);
+}
+
+TEST(Core_OutputArrayAssign, _Matxd_Matf)
+{
+    Mat expected = (Mat_<float>(2,3) << 1, 2, 3, .1, .2, .3);
+    Matx23d actualx;
+
+    {
+        OutputArray oa(actualx);
+        oa.assign(expected);
+    }
+
+    Mat actual = (Mat) actualx;
+
+    EXPECT_LE(maxAbsDiff(expected, actual), FLT_EPSILON);
+}
+
+TEST(Core_OutputArrayAssign, _Matxf_Matd)
+{
+    Mat expected = (Mat_<double>(2,3) << 1, 2, 3, .1, .2, .3);
+    Matx23f actualx;
+
+    {
+        OutputArray oa(actualx);
+        oa.assign(expected);
+    }
+
+    Mat actual = (Mat) actualx;
+
+    EXPECT_LE(maxAbsDiff(expected, actual), FLT_EPSILON);
+}
+
+TEST(Core_OutputArrayAssign, _Matxd_UMatd)
+{
+    Mat expected = (Mat_<double>(2,3) << 1, 2, 3, .1, .2, .3);
+    UMat uexpected = expected.getUMat(ACCESS_READ);
+    Matx23d actualx;
+
+    {
+        OutputArray oa(actualx);
+        oa.assign(uexpected);
+    }
+
+    Mat actual = (Mat) actualx;
+
+    EXPECT_LE(maxAbsDiff(expected, actual), 0.0);
+}
+
+TEST(Core_OutputArrayAssign, _Matxd_UMatf)
+{
+    Mat expected = (Mat_<float>(2,3) << 1, 2, 3, .1, .2, .3);
+    UMat uexpected = expected.getUMat(ACCESS_READ);
+    Matx23d actualx;
+
+    {
+        OutputArray oa(actualx);
+        oa.assign(uexpected);
+    }
+
+    Mat actual = (Mat) actualx;
+
+    EXPECT_LE(maxAbsDiff(expected, actual), FLT_EPSILON);
+}
+
+TEST(Core_OutputArrayAssign, _Matxf_UMatd)
+{
+    Mat expected = (Mat_<double>(2,3) << 1, 2, 3, .1, .2, .3);
+    UMat uexpected = expected.getUMat(ACCESS_READ);
+    Matx23f actualx;
+
+    {
+        OutputArray oa(actualx);
+        oa.assign(uexpected);
+    }
+
+    Mat actual = (Mat) actualx;
+
+    EXPECT_LE(maxAbsDiff(expected, actual), FLT_EPSILON);
+}
+
+
+TEST(Core_String, find_last_of__with__empty_string)
+{
+    cv::String s;
+    size_t p = s.find_last_of("q", 0);
+    // npos is not exported: EXPECT_EQ(cv::String::npos, p);
+    EXPECT_EQ(std::string::npos, p);
+}
+
+TEST(Core_String, end_method_regression)
+{
+    cv::String old_string = "012345";
+    cv::String new_string(old_string.begin(), old_string.end());
+    EXPECT_EQ(6u, new_string.size());
 }

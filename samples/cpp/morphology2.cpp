@@ -1,9 +1,9 @@
-#define CV_NO_BACKWARD_COMPATIBILITY
-
-#include "opencv2/imgproc/imgproc.hpp"
-#include "opencv2/highgui/highgui.hpp"
+#include "opencv2/imgproc.hpp"
+#include "opencv2/imgcodecs.hpp"
+#include "opencv2/highgui.hpp"
 #include <stdlib.h>
 #include <stdio.h>
+#include <string>
 
 using namespace cv;
 
@@ -37,9 +37,9 @@ static void OpenClose(int, void*)
     int an = n > 0 ? n : -n;
     Mat element = getStructuringElement(element_shape, Size(an*2+1, an*2+1), Point(an, an) );
     if( n < 0 )
-        morphologyEx(src, dst, CV_MOP_OPEN, element);
+        morphologyEx(src, dst, MORPH_OPEN, element);
     else
-        morphologyEx(src, dst, CV_MOP_CLOSE, element);
+        morphologyEx(src, dst, MORPH_CLOSE, element);
     imshow("Open/Close",dst);
 }
 
@@ -59,11 +59,18 @@ static void ErodeDilate(int, void*)
 
 int main( int argc, char** argv )
 {
-    char* filename = argc == 2 ? argv[1] : (char*)"baboon.jpg";
-    if( (src = imread(filename,1)).data == 0 )
+    cv::CommandLineParser parser(argc, argv, "{help h||}{ @image | ../data/baboon.jpg | }");
+    if (parser.has("help"))
+    {
+        help();
+        return 0;
+    }
+    std::string filename = parser.get<std::string>("@image");
+    if( (src = imread(filename,IMREAD_COLOR)).empty() )
+    {
+        help();
         return -1;
-
-    help();
+    }
 
     //create windows for output images
     namedWindow("Open/Close",1);
@@ -75,21 +82,19 @@ int main( int argc, char** argv )
 
     for(;;)
     {
-        int c;
-
         OpenClose(open_close_pos, 0);
         ErodeDilate(erode_dilate_pos, 0);
-        c = waitKey(0);
+        char c = (char)waitKey(0);
 
-        if( (char)c == 27 )
+        if( c == 27 )
             break;
-        if( (char)c == 'e' )
+        if( c == 'e' )
             element_shape = MORPH_ELLIPSE;
-        else if( (char)c == 'r' )
+        else if( c == 'r' )
             element_shape = MORPH_RECT;
-        else if( (char)c == 'c' )
+        else if( c == 'c' )
             element_shape = MORPH_CROSS;
-        else if( (char)c == ' ' )
+        else if( c == ' ' )
             element_shape = (element_shape + 1) % 3;
     }
 

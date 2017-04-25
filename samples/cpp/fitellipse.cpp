@@ -14,20 +14,22 @@
 *
 *
 ********************************************************************************/
-#include "opencv2/imgproc/imgproc.hpp"
-#include "opencv2/highgui/highgui.hpp"
+#include "opencv2/imgproc.hpp"
+#include "opencv2/imgcodecs.hpp"
+#include "opencv2/highgui.hpp"
 #include <iostream>
+
 using namespace cv;
 using namespace std;
 
-// static void help()
-// {
-//     cout <<
-//             "\nThis program is demonstration for ellipse fitting. The program finds\n"
-//             "contours and approximate it by ellipses.\n"
-//             "Call:\n"
-//             "./fitellipse [image_name -- Default stuff.jpg]\n" << endl;
-// }
+static void help()
+{
+    cout <<
+        "\nThis program is demonstration for ellipse fitting. The program finds\n"
+        "contours and approximate it by ellipses.\n"
+        "Call:\n"
+        "./fitellipse [image_name -- Default ../data/stuff.jpg]\n" << endl;
+}
 
 int sliderPos = 70;
 
@@ -37,11 +39,19 @@ void processImage(int, void*);
 
 int main( int argc, char** argv )
 {
-    const char* filename = argc == 2 ? argv[1] : (char*)"stuff.jpg";
+    cv::CommandLineParser parser(argc, argv,
+        "{help h||}{@image|../data/stuff.jpg|}"
+    );
+    if (parser.has("help"))
+    {
+        help();
+        return 0;
+    }
+    string filename = parser.get<string>("@image");
     image = imread(filename, 0);
     if( image.empty() )
     {
-        cout << "Couldn't open image " << filename << "\nUsage: fitellipse <image_name>\n";
+        cout << "Couldn't open image " << filename << "\n";
         return 0;
     }
 
@@ -64,7 +74,7 @@ void processImage(int /*h*/, void*)
     vector<vector<Point> > contours;
     Mat bimage = image >= sliderPos;
 
-    findContours(bimage, contours, CV_RETR_LIST, CV_CHAIN_APPROX_NONE);
+    findContours(bimage, contours, RETR_LIST, CHAIN_APPROX_NONE);
 
     Mat cimage = Mat::zeros(bimage.size(), CV_8UC3);
 
@@ -82,12 +92,12 @@ void processImage(int /*h*/, void*)
             continue;
         drawContours(cimage, contours, (int)i, Scalar::all(255), 1, 8);
 
-        ellipse(cimage, box, Scalar(0,0,255), 1, CV_AA);
-        ellipse(cimage, box.center, box.size*0.5f, box.angle, 0, 360, Scalar(0,255,255), 1, CV_AA);
+        ellipse(cimage, box, Scalar(0,0,255), 1, LINE_AA);
+        ellipse(cimage, box.center, box.size*0.5f, box.angle, 0, 360, Scalar(0,255,255), 1, LINE_AA);
         Point2f vtx[4];
         box.points(vtx);
         for( int j = 0; j < 4; j++ )
-            line(cimage, vtx[j], vtx[(j+1)%4], Scalar(0,255,0), 1, CV_AA);
+            line(cimage, vtx[j], vtx[(j+1)%4], Scalar(0,255,0), 1, LINE_AA);
     }
 
     imshow("result", cimage);

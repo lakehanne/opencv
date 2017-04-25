@@ -1,108 +1,85 @@
-#!/usr/bin/python
-import urllib2
-import sys
-import cv2.cv as cv
+#!/usr/bin/env python
 
-class Sketcher:
-    def __init__(self, windowname, dests):
-        self.prev_pt = None
-        self.windowname = windowname
-        self.dests = dests
-        cv.SetMouseCallback(self.windowname, self.on_mouse)
+'''
+Watershed segmentation
+=========
 
-    def on_mouse(self, event, x, y, flags, param):
-        pt = (x, y)
-        if event == cv.CV_EVENT_LBUTTONUP or not (flags & cv.CV_EVENT_FLAG_LBUTTON):
-            self.prev_pt = None
-        elif event == cv.CV_EVENT_LBUTTONDOWN:
-            self.prev_pt = pt
-        elif event == cv.CV_EVENT_MOUSEMOVE and (flags & cv.CV_EVENT_FLAG_LBUTTON) :
-            if self.prev_pt:
-                for dst in self.dests:
-                    cv.Line(dst, self.prev_pt, pt, cv.ScalarAll(255), 5, 8, 0)
-            self.prev_pt = pt
-            cv.ShowImage(self.windowname, img)
+This program demonstrates the watershed segmentation algorithm
+in OpenCV: watershed().
 
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        img0 = cv.LoadImage( sys.argv[1], cv.CV_LOAD_IMAGE_COLOR)
-    else:
-        url = 'https://raw.github.com/Itseez/opencv/master/samples/c/fruits.jpg'
-        filedata = urllib2.urlopen(url).read()
-        imagefiledata = cv.CreateMatHeader(1, len(filedata), cv.CV_8UC1)
-        cv.SetData(imagefiledata, filedata, len(filedata))
-        img0 = cv.DecodeImage(imagefiledata, cv.CV_LOAD_IMAGE_COLOR)
+Usage
+-----
+watershed.py [image filename]
 
-    rng = cv.RNG(-1)
+Keys
+----
+  1-7   - switch marker color
+  SPACE - update segmentation
+  r     - reset
+  a     - toggle autoupdate
+  ESC   - exit
 
-    print "Hot keys:"
-    print "\tESC - quit the program"
-    print "\tr - restore the original image"
-    print "\tw - run watershed algorithm"
-    print "\t  (before that, roughly outline several markers on the image)"
+'''
 
-    cv.NamedWindow("image", 1)
-    cv.NamedWindow("watershed transform", 1)
 
-    img = cv.CloneImage(img0)
-    img_gray = cv.CloneImage(img0)
-    wshed = cv.CloneImage(img0)
-    marker_mask = cv.CreateImage(cv.GetSize(img), 8, 1)
-    markers = cv.CreateImage(cv.GetSize(img), cv.IPL_DEPTH_32S, 1)
+# Python 2/3 compatibility
+from __future__ import print_function
 
-    cv.CvtColor(img, marker_mask, cv.CV_BGR2GRAY)
-    cv.CvtColor(marker_mask, img_gray, cv.CV_GRAY2BGR)
+import numpy as np
+import cv2
+from common import Sketcher
 
-    cv.Zero(marker_mask)
-    cv.Zero(wshed)
+class App:
+    def __init__(self, fn):
+        self.img = cv2.imread(fn)
+        if self.img is None:
+            raise Exception('Failed to load image file: %s' % fn)
 
-    cv.ShowImage("image", img)
-    cv.ShowImage("watershed transform", wshed)
+        h, w = self.img.shape[:2]
+        self.markers = np.zeros((h, w), np.int32)
+        self.markers_vis = self.img.copy()
+        self.cur_marker = 1
+        self.colors = np.int32( list(np.ndindex(2, 2, 2)) ) * 255
 
-    sk = Sketcher("image", [img, marker_mask])
+        self.auto_update = True
+        self.sketch = Sketcher('img', [self.markers_vis, self.markers], self.get_colors)
 
-    while True:
-        c = cv.WaitKey(0) % 0x100
-        if c == 27 or c == ord('q'):
-            break
-        if c == ord('r'):
-            cv.Zero(marker_mask)
-            cv.Copy(img0, img)
-            cv.ShowImage("image", img)
-        if c == ord('w'):
-            storage = cv.CreateMemStorage(0)
-            #cv.SaveImage("wshed_mask.png", marker_mask)
-            #marker_mask = cv.LoadImage("wshed_mask.png", 0)
-            contours = cv.FindContours(marker_mask, storage, cv.CV_RETR_CCOMP, cv.CV_CHAIN_APPROX_SIMPLE)
-            def contour_iterator(contour):
-                while contour:
-                    yield contour
-                    contour = contour.h_next()
+    def get_colors(self):
+        return list(map(int, self.colors[self.cur_marker])), self.cur_marker
 
-            cv.Zero(markers)
-            comp_count = 0
-            for c in contour_iterator(contours):
-                cv.DrawContours(markers,
-                                c,
-                                cv.ScalarAll(comp_count + 1),
-                                cv.ScalarAll(comp_count + 1),
-                                -1,
-                                -1,
-                                8)
-                comp_count += 1
+    def watershed(self):
+        m = self.markers.copy()
+        cv2.watershed(self.img, m)
+        overlay = self.colors[np.maximum(m, 0)]
+        vis = cv2.addWeighted(self.img, 0.5, overlay, 0.5, 0.0, dtype=cv2.CV_8UC3)
+        cv2.imshow('watershed', vis)
 
-            cv.Watershed(img0, markers)
+    def run(self):
+        while cv2.getWindowProperty('img', 0) != -1 or cv2.getWindowProperty('watershed', 0) != -1:
+            ch = cv2.waitKey(50)
+            if ch == 27:
+                break
+            if ch >= ord('1') and ch <= ord('7'):
+                self.cur_marker = ch - ord('0')
+                print('marker: ', self.cur_marker)
+            if ch == ord(' ') or (self.sketch.dirty and self.auto_update):
+                self.watershed()
+                self.sketch.dirty = False
+            if ch in [ord('a'), ord('A')]:
+                self.auto_update = not self.auto_update
+                print('auto_update if', ['off', 'on'][self.auto_update])
+            if ch in [ord('r'), ord('R')]:
+                self.markers[:] = 0
+                self.markers_vis[:] = self.img
+                self.sketch.show()
+        cv2.destroyAllWindows()
 
-            cv.Set(wshed, cv.ScalarAll(255))
 
-            # paint the watershed image
-            color_tab = [(cv.RandInt(rng) % 180 + 50, cv.RandInt(rng) % 180 + 50, cv.RandInt(rng) % 180 + 50) for i in range(comp_count)]
-            for j in range(markers.height):
-                for i in range(markers.width):
-                    idx = markers[j, i]
-                    if idx != -1:
-                        wshed[j, i] = color_tab[int(idx - 1)]
-
-            cv.AddWeighted(wshed, 0.5, img_gray, 0.5, 0, wshed)
-            cv.ShowImage("watershed transform", wshed)
-    cv.DestroyAllWindows()
+if __name__ == '__main__':
+    import sys
+    try:
+        fn = sys.argv[1]
+    except:
+        fn = '../data/fruits.jpg'
+    print(__doc__)
+    App(fn).run()

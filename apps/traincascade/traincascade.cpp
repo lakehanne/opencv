@@ -1,7 +1,4 @@
-#include "opencv2/core/core.hpp"
-#include "opencv2/core/internal.hpp"
-
-#include "cv.h"
+#include "opencv2/core.hpp"
 #include "cascadeclassifier.h"
 
 using namespace std;
@@ -14,6 +11,7 @@ int main( int argc, char* argv[] )
     int numPos    = 2000;
     int numNeg    = 1000;
     int numStages = 20;
+    int numThreads = getNumThreads();
     int precalcValBufSize = 1024,
         precalcIdxBufSize = 1024;
     bool baseFormatSave = false;
@@ -21,9 +19,9 @@ int main( int argc, char* argv[] )
 
     CvCascadeParams cascadeParams;
     CvCascadeBoostParams stageParams;
-    Ptr<CvFeatureParams> featureParams[] = { Ptr<CvFeatureParams>(new CvHaarFeatureParams),
-                                             Ptr<CvFeatureParams>(new CvLBPFeatureParams),
-                                             Ptr<CvFeatureParams>(new CvHOGFeatureParams)
+    Ptr<CvFeatureParams> featureParams[] = { makePtr<CvHaarFeatureParams>(),
+                                             makePtr<CvLBPFeatureParams>(),
+                                             makePtr<CvHOGFeatureParams>()
                                            };
     int fc = sizeof(featureParams)/sizeof(featureParams[0]);
     if( argc == 1 )
@@ -38,6 +36,7 @@ int main( int argc, char* argv[] )
         cout << "  [-precalcValBufSize <precalculated_vals_buffer_size_in_Mb = " << precalcValBufSize << ">]" << endl;
         cout << "  [-precalcIdxBufSize <precalculated_idxs_buffer_size_in_Mb = " << precalcIdxBufSize << ">]" << endl;
         cout << "  [-baseFormatSave]" << endl;
+        cout << "  [-numThreads <max_number_of_threads = " << numThreads << ">]" << endl;
         cout << "  [-acceptanceRatioBreakValue <value> = " << acceptanceRatioBreakValue << ">]" << endl;
         cascadeParams.printDefaults();
         stageParams.printDefaults();
@@ -85,9 +84,13 @@ int main( int argc, char* argv[] )
         {
             baseFormatSave = true;
         }
+        else if( !strcmp( argv[i], "-numThreads" ) )
+        {
+          numThreads = atoi(argv[++i]);
+        }
         else if( !strcmp( argv[i], "-acceptanceRatioBreakValue" ) )
         {
-            acceptanceRatioBreakValue = atof(argv[++i]);
+          acceptanceRatioBreakValue = atof(argv[++i]);
         }
         else if ( cascadeParams.scanAttr( argv[i], argv[i+1] ) ) { i++; }
         else if ( stageParams.scanAttr( argv[i], argv[i+1] ) ) { i++; }
@@ -105,6 +108,7 @@ int main( int argc, char* argv[] )
         }
     }
 
+    setNumThreads( numThreads );
     classifier.train( cascadeDirName,
                       vecName,
                       bgName,

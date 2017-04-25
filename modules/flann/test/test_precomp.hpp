@@ -6,12 +6,11 @@
 #  endif
 #endif
 
-#ifndef __OPENCV_TEST_PRECOMP_HPP__
-#define __OPENCV_TEST_PRECOMP_HPP__
+#ifndef OPENCV_TEST_PRECOMP_HPP
+#define OPENCV_TEST_PRECOMP_HPP
 
-#include "opencv2/ts/ts.hpp"
-#include "opencv2/core/core.hpp"
-#include "opencv2/flann/flann.hpp"
+#include "opencv2/ts.hpp"
+#include "opencv2/flann.hpp"
 #include <iostream>
 
 #endif

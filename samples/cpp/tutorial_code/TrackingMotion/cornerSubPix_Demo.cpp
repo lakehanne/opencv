@@ -4,11 +4,10 @@
  * @author OpenCV team
  */
 
-#include "opencv2/highgui/highgui.hpp"
-#include "opencv2/imgproc/imgproc.hpp"
+#include "opencv2/imgcodecs.hpp"
+#include "opencv2/highgui.hpp"
+#include "opencv2/imgproc.hpp"
 #include <iostream>
-#include <stdio.h>
-#include <stdlib.h>
 
 using namespace cv;
 using namespace std;
@@ -31,7 +30,7 @@ void goodFeaturesToTrack_Demo( int, void* );
 int main( int, char** argv )
 {
   /// Load source image and convert it to gray
-  src = imread( argv[1], 1 );
+  src = imread( argv[1], IMREAD_COLOR );
   cvtColor( src, src_gray, COLOR_BGR2GRAY );
 
   /// Create Window
@@ -93,7 +92,7 @@ void goodFeaturesToTrack_Demo( int, void* )
   /// Set the neeed parameters to find the refined corners
   Size winSize = Size( 5, 5 );
   Size zeroZone = Size( -1, -1 );
-  TermCriteria criteria = TermCriteria( CV_TERMCRIT_EPS + CV_TERMCRIT_ITER, 40, 0.001 );
+  TermCriteria criteria = TermCriteria( TermCriteria::EPS + TermCriteria::COUNT, 40, 0.001 );
 
   /// Calculate the refined corner locations
   cornerSubPix( src_gray, corners, winSize, zeroZone, criteria );

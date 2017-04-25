@@ -47,21 +47,16 @@ Software for visualising cascade classifier models trained by OpenCV and to get 
 understanding of the used features.
 
 USAGE:
-./visualise_models -model <model.xml> -image <ref.png> -data <output folder>
-
-LIMITS
-- Use an absolute path for the output folder to ensure the tool works
-- Only handles cascade classifier models
-- Handles stumps only for the moment
-- Needs a valid training/test sample window with the original model dimensions, passed as `ref.png`
-- Can handle HAAR and LBP features
+./opencv_visualisation --model=<model.xml> --image=<ref.png> --data=<video output folder>
 
 Created by: Puttemans Steven - April 2016
 *****************************************************************************************************/
 
-#include <opencv2/core/core.hpp>
-#include <opencv2/highgui/highgui.hpp>
-#include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/highgui.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/videoio.hpp>
 
 #include <fstream>
 #include <iostream>
@@ -77,22 +72,34 @@ struct rect_data{
     float weight;
 };
 
+static void printLimits(){
+    cerr << "Limits of the current interface:" << endl;
+    cerr << " - Only handles cascade classifier models, trained with the opencv_traincascade tool, containing stumps as decision trees [default settings]." << endl;
+    cerr << " - The image provided needs to be a sample window with the original model dimensions, passed to the --image parameter." << endl;
+    cerr << " - ONLY handles HAAR and LBP features." << endl;
+}
+
 int main( int argc, const char** argv )
 {
+    CommandLineParser parser(argc, argv,
+        "{ help h usage ? |      | show this message }"
+        "{ image i        |      | (required) path to reference image }"
+        "{ model m        |      | (required) path to cascade xml file }"
+        "{ data d         |      | (optional) path to video output folder }"
+    );
     // Read in the input arguments
-    string model = "";
-    string output_folder = "";
-    string image_ref = "";
-    for(int i = 1; i < argc; ++i )
-    {
-        if( !strcmp( argv[i], "-model" ) )
-        {
-            model = argv[++i];
-        }else if( !strcmp( argv[i], "-image" ) ){
-            image_ref = argv[++i];
-        }else if( !strcmp( argv[i], "-data" ) ){
-            output_folder = argv[++i];
-        }
+    if (parser.has("help")){
+        parser.printMessage();
+        printLimits();
+        return 0;
+    }
+    string model(parser.get<string>("model"));
+    string output_folder(parser.get<string>("data"));
+    string image_ref = (parser.get<string>("image"));
+    if (model.empty() || image_ref.empty()){
+        parser.printMessage();
+        printLimits();
+        return -1;
     }
 
     // Value for timing
@@ -104,8 +111,11 @@ int main( int argc, const char** argv )
 
     // Open the XML model
     FileStorage fs;
-    fs.open(model, FileStorage::READ);
-
+    bool model_ok = fs.open(model, FileStorage::READ);
+    if (!model_ok){
+        cerr << "the cascade file '" << model << "' could not be loaded." << endl;
+        return  -1;
+    }
     // Get a the required information
     // First decide which feature type we are using
     FileNode cascade = fs["cascade"];
@@ -127,6 +137,10 @@ int main( int argc, const char** argv )
     int resize_factor = 10;
     int resize_storage_factor = 10;
     Mat reference_image = imread(image_ref, IMREAD_GRAYSCALE );
+    if (reference_image.empty()){
+        cerr << "the reference image '" << image_ref << "'' could not be loaded." << endl;
+        return -1;
+    }
     Mat visualization;
     resize(reference_image, visualization, Size(reference_image.cols * resize_factor, reference_image.rows * resize_factor));
 
@@ -156,7 +170,7 @@ int main( int argc, const char** argv )
     VideoWriter result_video;
     if( output_folder.compare("") != 0 ){
         draw_planes = true;
-        result_video.open(output_video.str(), CV_FOURCC('X','V','I','D'), 15, Size(reference_image.cols * resize_factor, reference_image.rows * resize_factor), false);
+        result_video.open(output_video.str(), VideoWriter::fourcc('X','V','I','D'), 15, Size(reference_image.cols * resize_factor, reference_image.rows * resize_factor), false);
     }
 
     if(haar){
@@ -211,17 +225,17 @@ int main( int argc, const char** argv )
                     rect_data local = current_rects[i];
                     if(draw_planes){
                         if(local.weight >= 0){
-                            rectangle(single_feature, Rect(local.x * resize_storage_factor, local.y * resize_storage_factor, local.w * resize_storage_factor, local.h * resize_storage_factor), Scalar(0), CV_FILLED);
+                            rectangle(single_feature, Rect(local.x * resize_storage_factor, local.y * resize_storage_factor, local.w * resize_storage_factor, local.h * resize_storage_factor), Scalar(0), FILLED);
                         }else{
-                            rectangle(single_feature, Rect(local.x * resize_storage_factor, local.y * resize_storage_factor, local.w * resize_storage_factor, local.h * resize_storage_factor), Scalar(255), CV_FILLED);
+                            rectangle(single_feature, Rect(local.x * resize_storage_factor, local.y * resize_storage_factor, local.w * resize_storage_factor, local.h * resize_storage_factor), Scalar(255), FILLED);
                         }
                     }
                     Rect part(local.x * resize_factor, local.y * resize_factor, local.w * resize_factor, local.h * resize_factor);
                     meta2 << part << " (w " << local.weight << ") ";
                     if(local.weight >= 0){
-                        rectangle(temp_window, part, Scalar(0), CV_FILLED);
+                        rectangle(temp_window, part, Scalar(0), FILLED);
                     }else{
-                        rectangle(temp_window, part, Scalar(255), CV_FILLED);
+                        rectangle(temp_window, part, Scalar(255), FILLED);
                     }
                 }
                 imshow("features", temp_window);
@@ -294,7 +308,7 @@ int main( int argc, const char** argv )
                 // Middle left
                 rectangle(temp_window, Rect(resized.x, resized.y + resized.height, resized.width, resized.height), Scalar(255), 1);
                 // Middle middle
-                rectangle(temp_window, Rect(resized.x + resized.width, resized.y + resized.height, resized.width, resized.height), Scalar(255), CV_FILLED);
+                rectangle(temp_window, Rect(resized.x + resized.width, resized.y + resized.height, resized.width, resized.height), Scalar(255), FILLED);
                 // Middle right
                 rectangle(temp_window, Rect(resized.x + 2*resized.width, resized.y + resized.height, resized.width, resized.height), Scalar(255), 1);
                 // Bottom left
@@ -315,7 +329,7 @@ int main( int argc, const char** argv )
                     // Middle left
                     rectangle(single_feature, Rect(resized_inner.x, resized_inner.y + resized_inner.height, resized_inner.width, resized_inner.height), Scalar(255), 1);
                     // Middle middle
-                    rectangle(single_feature, Rect(resized_inner.x + resized_inner.width, resized_inner.y + resized_inner.height, resized_inner.width, resized_inner.height), Scalar(255), CV_FILLED);
+                    rectangle(single_feature, Rect(resized_inner.x + resized_inner.width, resized_inner.y + resized_inner.height, resized_inner.width, resized_inner.height), Scalar(255), FILLED);
                     // Middle right
                     rectangle(single_feature, Rect(resized_inner.x + 2*resized_inner.width, resized_inner.y + resized_inner.height, resized_inner.width, resized_inner.height), Scalar(255), 1);
                     // Bottom left

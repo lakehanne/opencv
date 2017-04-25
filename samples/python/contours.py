@@ -1,136 +1,70 @@
-#! /usr/bin/env python
+#!/usr/bin/env python
 
-print "OpenCV Python version of contours"
+'''
+This program illustrates the use of findContours and drawContours.
+The original image is put up along with the image of drawn contours.
 
-# import the necessary things for OpenCV
-import cv2.cv as cv
+Usage:
+    contours.py
+A trackbar is put up which controls the contour level from -3 to 3
+'''
 
-# some default constants
-_SIZE = 500
-_DEFAULT_LEVEL = 3
+# Python 2/3 compatibility
+from __future__ import print_function
+import sys
+PY3 = sys.version_info[0] == 3
 
-# definition of some colors
-_red =  (0, 0, 255, 0);
-_green =  (0, 255, 0, 0);
-_white = cv.RealScalar (255)
-_black = cv.RealScalar (0)
+if PY3:
+    xrange = range
 
-# the callback on the trackbar, to set the level of contours we want
-# to display
-def on_trackbar (position):
+import numpy as np
+import cv2
 
-    # create the image for putting in it the founded contours
-    contours_image = cv.CreateImage ( (_SIZE, _SIZE), 8, 3)
+def make_image():
+    img = np.zeros((500, 500), np.uint8)
+    black, white = 0, 255
+    for i in xrange(6):
+        dx = int((i%2)*250 - 30)
+        dy = int((i/2.)*150)
 
-    # compute the real level of display, given the current position
-    levels = position - 3
+        if i == 0:
+            for j in xrange(11):
+                angle = (j+5)*np.pi/21
+                c, s = np.cos(angle), np.sin(angle)
+                x1, y1 = np.int32([dx+100+j*10-80*c, dy+100-90*s])
+                x2, y2 = np.int32([dx+100+j*10-30*c, dy+100-30*s])
+                cv2.line(img, (x1, y1), (x2, y2), white)
 
-    # initialisation
-    _contours = contours
-
-    if levels <= 0:
-        # zero or negative value
-        # => get to the nearest face to make it look more funny
-        _contours = contours.h_next().h_next().h_next()
-
-    # first, clear the image where we will draw contours
-    cv.SetZero (contours_image)
-
-    # draw contours in red and green
-    cv.DrawContours (contours_image, _contours,
-                       _red, _green,
-                       levels, 3, cv.CV_AA,
-                        (0, 0))
-
-    # finally, show the image
-    cv.ShowImage ("contours", contours_image)
+        cv2.ellipse( img, (dx+150, dy+100), (100,70), 0, 0, 360, white, -1 )
+        cv2.ellipse( img, (dx+115, dy+70), (30,20), 0, 0, 360, black, -1 )
+        cv2.ellipse( img, (dx+185, dy+70), (30,20), 0, 0, 360, black, -1 )
+        cv2.ellipse( img, (dx+115, dy+70), (15,15), 0, 0, 360, white, -1 )
+        cv2.ellipse( img, (dx+185, dy+70), (15,15), 0, 0, 360, white, -1 )
+        cv2.ellipse( img, (dx+115, dy+70), (5,5), 0, 0, 360, black, -1 )
+        cv2.ellipse( img, (dx+185, dy+70), (5,5), 0, 0, 360, black, -1 )
+        cv2.ellipse( img, (dx+150, dy+100), (10,5), 0, 0, 360, black, -1 )
+        cv2.ellipse( img, (dx+150, dy+150), (40,10), 0, 0, 360, black, -1 )
+        cv2.ellipse( img, (dx+27, dy+100), (20,35), 0, 0, 360, white, -1 )
+        cv2.ellipse( img, (dx+273, dy+100), (20,35), 0, 0, 360, white, -1 )
+    return img
 
 if __name__ == '__main__':
+    print(__doc__)
 
-    # create the image where we want to display results
-    image = cv.CreateImage ( (_SIZE, _SIZE), 8, 1)
+    img = make_image()
+    h, w = img.shape[:2]
 
-    # start with an empty image
-    cv.SetZero (image)
+    _, contours0, hierarchy = cv2.findContours( img.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    contours = [cv2.approxPolyDP(cnt, 3, True) for cnt in contours0]
 
-    # draw the original picture
-    for i in range (6):
-        dx = (i % 2) * 250 - 30
-        dy = (i / 2) * 150
-
-        cv.Ellipse (image,
-                       (dx + 150, dy + 100),
-                       (100, 70),
-                      0, 0, 360, _white, -1, 8, 0)
-        cv.Ellipse (image,
-                       (dx + 115, dy + 70),
-                       (30, 20),
-                      0, 0, 360, _black, -1, 8, 0)
-        cv.Ellipse (image,
-                       (dx + 185, dy + 70),
-                       (30, 20),
-                      0, 0, 360, _black, -1, 8, 0)
-        cv.Ellipse (image,
-                       (dx + 115, dy + 70),
-                       (15, 15),
-                      0, 0, 360, _white, -1, 8, 0)
-        cv.Ellipse (image,
-                       (dx + 185, dy + 70),
-                       (15, 15),
-                      0, 0, 360, _white, -1, 8, 0)
-        cv.Ellipse (image,
-                       (dx + 115, dy + 70),
-                       (5, 5),
-                      0, 0, 360, _black, -1, 8, 0)
-        cv.Ellipse (image,
-                       (dx + 185, dy + 70),
-                       (5, 5),
-                      0, 0, 360, _black, -1, 8, 0)
-        cv.Ellipse (image,
-                       (dx + 150, dy + 100),
-                       (10, 5),
-                      0, 0, 360, _black, -1, 8, 0)
-        cv.Ellipse (image,
-                       (dx + 150, dy + 150),
-                       (40, 10),
-                      0, 0, 360, _black, -1, 8, 0)
-        cv.Ellipse (image,
-                       (dx + 27, dy + 100),
-                       (20, 35),
-                      0, 0, 360, _white, -1, 8, 0)
-        cv.Ellipse (image,
-                       (dx + 273, dy + 100),
-                       (20, 35),
-                      0, 0, 360, _white, -1, 8, 0)
-
-    # create window and display the original picture in it
-    cv.NamedWindow ("image", 1)
-    cv.ShowImage ("image", image)
-
-    # create the storage area
-    storage = cv.CreateMemStorage (0)
-
-    # find the contours
-    contours = cv.FindContours(image,
-                               storage,
-                               cv.CV_RETR_TREE,
-                               cv.CV_CHAIN_APPROX_SIMPLE,
-                               (0,0))
-
-    # comment this out if you do not want approximation
-    contours = cv.ApproxPoly (contours,
-                                storage,
-                                cv.CV_POLY_APPROX_DP, 3, 1)
-
-    # create the window for the contours
-    cv.NamedWindow ("contours", 1)
-
-    # create the trackbar, to enable the change of the displayed level
-    cv.CreateTrackbar ("levels+3", "contours", 3, 7, on_trackbar)
-
-    # call one time the callback, so we will have the 1st display done
-    on_trackbar (_DEFAULT_LEVEL)
-
-    # wait a key pressed to end
-    cv.WaitKey (0)
-    cv.DestroyAllWindows()
+    def update(levels):
+        vis = np.zeros((h, w, 3), np.uint8)
+        levels = levels - 3
+        cv2.drawContours( vis, contours, (-1, 2)[levels <= 0], (128,255,255),
+            3, cv2.LINE_AA, hierarchy, abs(levels) )
+        cv2.imshow('contours', vis)
+    update(3)
+    cv2.createTrackbar( "levels+3", "contours", 3, 7, update )
+    cv2.imshow('image', img)
+    cv2.waitKey()
+    cv2.destroyAllWindows()

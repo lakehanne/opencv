@@ -1,6 +1,7 @@
 #include "opencv2/video/tracking.hpp"
-#include "opencv2/imgproc/imgproc.hpp"
-#include "opencv2/highgui/highgui.hpp"
+#include "opencv2/imgproc.hpp"
+#include "opencv2/videoio.hpp"
+#include "opencv2/highgui.hpp"
 
 #include <iostream>
 #include <ctype.h>
@@ -27,7 +28,7 @@ bool addRemovePt = false;
 
 static void onMouse( int event, int x, int y, int /*flags*/, void* /*param*/ )
 {
-    if( event == CV_EVENT_LBUTTONDOWN )
+    if( event == EVENT_LBUTTONDOWN )
     {
         point = Point2f((float)x, (float)y);
         addRemovePt = true;
@@ -36,20 +37,27 @@ static void onMouse( int event, int x, int y, int /*flags*/, void* /*param*/ )
 
 int main( int argc, char** argv )
 {
-    help();
-
     VideoCapture cap;
-    TermCriteria termcrit(CV_TERMCRIT_ITER|CV_TERMCRIT_EPS, 20, 0.03);
+    TermCriteria termcrit(TermCriteria::COUNT|TermCriteria::EPS,20,0.03);
     Size subPixWinSize(10,10), winSize(31,31);
 
     const int MAX_COUNT = 500;
     bool needToInit = false;
     bool nightMode = false;
 
-    if( argc == 1 || (argc == 2 && strlen(argv[1]) == 1 && isdigit(argv[1][0])))
-        cap.open(argc == 2 ? argv[1][0] - '0' : 0);
-    else if( argc == 2 )
-        cap.open(argv[1]);
+    cv::CommandLineParser parser(argc, argv, "{@input||}{help h||}");
+    string input = parser.get<string>("@input");
+    if (parser.has("help"))
+    {
+        help();
+        return 0;
+    }
+    if( input.empty() )
+        cap.open(0);
+    else if( input.size() == 1 && isdigit(input[0]) )
+        cap.open(input[0] - '0');
+    else
+        cap.open(input);
 
     if( !cap.isOpened() )
     {
@@ -115,7 +123,7 @@ int main( int argc, char** argv )
         {
             vector<Point2f> tmp;
             tmp.push_back(point);
-            cornerSubPix( gray, tmp, winSize, cvSize(-1,-1), termcrit);
+            cornerSubPix( gray, tmp, winSize, Size(-1,-1), termcrit);
             points[1].push_back(tmp[0]);
             addRemovePt = false;
         }

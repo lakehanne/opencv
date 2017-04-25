@@ -1,4 +1,4 @@
-SET(OPENCV_ANNOTATION_DEPS opencv_core opencv_highgui opencv_imgproc)
+SET(OPENCV_ANNOTATION_DEPS opencv_core opencv_highgui opencv_imgproc opencv_imgcodecs opencv_videoio)
 ocv_check_dependencies(${OPENCV_ANNOTATION_DEPS})
 
 if(NOT OCV_DEPENDENCIES_FOUND)
@@ -6,15 +6,16 @@ if(NOT OCV_DEPENDENCIES_FOUND)
 endif()
 
 project(annotation)
-
-ocv_include_directories("${CMAKE_CURRENT_SOURCE_DIR}" "${OpenCV_SOURCE_DIR}/include/opencv")
-ocv_include_modules(${OPENCV_ANNOTATION_DEPS})
-
-set(annotation_files opencv_annotation.cpp)
 set(the_target opencv_annotation)
 
-add_executable(${the_target} ${annotation_files})
-target_link_libraries(${the_target} ${OPENCV_ANNOTATION_DEPS})
+ocv_target_include_directories(${the_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${OpenCV_SOURCE_DIR}/include/opencv")
+ocv_target_include_modules_recurse(${the_target} ${OPENCV_ANNOTATION_DEPS})
+
+file(GLOB SRCS *.cpp)
+
+set(annotation_files ${SRCS})
+ocv_add_executable(${the_target} ${annotation_files})
+ocv_target_link_libraries(${the_target} ${OPENCV_ANNOTATION_DEPS})
 
 set_target_properties(${the_target} PROPERTIES
                       DEBUG_POSTFIX "${OPENCV_DEBUG_POSTFIX}"

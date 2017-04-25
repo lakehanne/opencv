@@ -232,7 +232,7 @@ void Core_PowTest::prepare_to_validation( int /*test_case_idx*/ )
                     for( j = 0; j < ncols; j++ )
                     {
                         int val = ((uchar*)a_data)[j];
-                        ((uchar*)b_data)[j] = (uchar)(val <= 1 ? val :
+                        ((uchar*)b_data)[j] = (uchar)(val == 0 ? 255 : val == 1 ? 1 :
                                                       val == 2 && ipower == -1 ? 1 : 0);
                     }
                 else
@@ -247,17 +247,17 @@ void Core_PowTest::prepare_to_validation( int /*test_case_idx*/ )
                 if( ipower < 0 )
                     for( j = 0; j < ncols; j++ )
                     {
-                        int val = ((char*)a_data)[j];
-                        ((char*)b_data)[j] = (char)((val&~1)==0 ? val :
+                        int val = ((schar*)a_data)[j];
+                        ((schar*)b_data)[j] = (schar)(val == 0 ? 127 : val == 1 ? 1 :
                                                     val ==-1 ? 1-2*(ipower&1) :
                                                     val == 2 && ipower == -1 ? 1 : 0);
                     }
                 else
                     for( j = 0; j < ncols; j++ )
                     {
-                        int val = ((char*)a_data)[j];
+                        int val = ((schar*)a_data)[j];
                         val = ipow( val, ipower );
-                        ((char*)b_data)[j] = saturate_cast<schar>(val);
+                        ((schar*)b_data)[j] = saturate_cast<schar>(val);
                     }
                 break;
             case CV_16U:
@@ -265,7 +265,7 @@ void Core_PowTest::prepare_to_validation( int /*test_case_idx*/ )
                     for( j = 0; j < ncols; j++ )
                     {
                         int val = ((ushort*)a_data)[j];
-                        ((ushort*)b_data)[j] = (ushort)((val&~1)==0 ? val :
+                        ((ushort*)b_data)[j] = (ushort)(val == 0 ? 65535 : val == 1 ? 1 :
                                                         val ==-1 ? 1-2*(ipower&1) :
                                                         val == 2 && ipower == -1 ? 1 : 0);
                     }
@@ -282,7 +282,7 @@ void Core_PowTest::prepare_to_validation( int /*test_case_idx*/ )
                     for( j = 0; j < ncols; j++ )
                     {
                         int val = ((short*)a_data)[j];
-                        ((short*)b_data)[j] = (short)((val&~1)==0 ? val :
+                        ((short*)b_data)[j] = (short)(val == 0 ? 32767 : val == 1 ? 1 :
                                                       val ==-1 ? 1-2*(ipower&1) :
                                                       val == 2 && ipower == -1 ? 1 : 0);
                     }
@@ -299,7 +299,7 @@ void Core_PowTest::prepare_to_validation( int /*test_case_idx*/ )
                     for( j = 0; j < ncols; j++ )
                     {
                         int val = ((int*)a_data)[j];
-                        ((int*)b_data)[j] = (val&~1)==0 ? val :
+                        ((int*)b_data)[j] = val == 0 ? INT_MAX : val == 1 ? 1 :
                         val ==-1 ? 1-2*(ipower&1) :
                         val == 2 && ipower == -1 ? 1 : 0;
                     }
@@ -350,8 +350,6 @@ void Core_PowTest::prepare_to_validation( int /*test_case_idx*/ )
         }
     }
 }
-
-
 
 ///////////////////////////////////////// matrix tests ////////////////////////////////////////////
 
@@ -458,7 +456,7 @@ void Core_TraceTest::prepare_to_validation( int )
 {
     Mat& mat = test_mat[INPUT][0];
     int count = MIN( mat.rows, mat.cols );
-    Mat diag(count, 1, mat.type(), mat.data, mat.step + mat.elemSize());
+    Mat diag(count, 1, mat.type(), mat.ptr(), mat.step + mat.elemSize());
     Scalar r = cvtest::mean(diag);
     r *= (double)count;
 
@@ -545,7 +543,7 @@ void Core_CrossProductTest::run_func()
 
 void Core_CrossProductTest::prepare_to_validation( int )
 {
-    CvScalar a = {{0,0,0,0}}, b = {{0,0,0,0}}, c = {{0,0,0,0}};
+    CvScalar a(0), b(0), c(0);
 
     if( test_mat[INPUT][0].rows > 1 )
     {
@@ -617,6 +615,7 @@ Core_GEMMTest::Core_GEMMTest() : Core_MatrixTest( 5, 1, false, false, 2 )
 {
     test_case_count = 100;
     max_log_array_size = 10;
+    tabc_flag = 0;
     alpha = beta = 0;
 }
 
@@ -821,6 +820,8 @@ protected:
 
 Core_TransformTest::Core_TransformTest() : Core_MatrixTest( 3, 1, true, false, 4 )
 {
+    scale = 1;
+    diagMtx = false;
 }
 
 
@@ -1154,7 +1155,7 @@ protected:
 
 
 Core_CovarMatrixTest::Core_CovarMatrixTest() : Core_MatrixTest( 1, 1, true, false, 1 ),
-flags(0), t_flag(0), are_images(false)
+    flags(0), t_flag(0), len(0), count(0), are_images(false)
 {
     test_case_count = 100;
     test_array[INPUT_OUTPUT].push_back(NULL);
@@ -2292,9 +2293,9 @@ void Core_SolvePolyTest::run( int )
                 cvFlip(&amat, &amat, 0);
                 int nr2;
                 if( cubic_case == 0 )
-                    nr2 = cv::solveCubic(cv::Mat(&amat),umat2);
+                    nr2 = cv::solveCubic(cv::cvarrToMat(&amat),umat2);
                 else
-                    nr2 = cv::solveCubic(cv::Mat_<float>(cv::Mat(&amat)), umat2);
+                    nr2 = cv::solveCubic(cv::Mat_<float>(cv::cvarrToMat(&amat)), umat2);
                 cvFlip(&amat, &amat, 0);
                 if(nr2 > 0)
                     std::sort(ar2.begin(), ar2.begin()+nr2, pred_double());
@@ -2329,7 +2330,7 @@ void Core_SolvePolyTest::run( int )
             pass = pass && div < err_eps;
         }
 
-        //test bug #5623 - solves equation x^3 = 0
+        //test x^3 = 0
         cv::Mat coeffs_5623(4, 1, CV_64FC1);
         cv::Mat r_5623(3, 1, CV_64FC2);
         coeffs_5623.at<double>(0) = 1;
@@ -2408,40 +2409,119 @@ TEST(Core_SolvePoly, regression_5599)
     }
 }
 
-class Core_CheckRange_Empty : public cvtest::BaseTest
+class Core_PhaseTest : public cvtest::BaseTest
 {
+    int t;
 public:
-    Core_CheckRange_Empty(){}
-    ~Core_CheckRange_Empty(){}
+    Core_PhaseTest(int t_) : t(t_) {}
+    ~Core_PhaseTest() {}
 protected:
-    virtual void run( int start_from );
+    virtual void run(int)
+    {
+        const float maxAngleDiff = 0.5; //in degrees
+        const int axisCount = 8;
+        const int dim = theRNG().uniform(1,10);
+        const float scale = theRNG().uniform(1.f, 100.f);
+        Mat x(axisCount + 1, dim, t),
+            y(axisCount + 1, dim, t);
+        Mat anglesInDegrees(axisCount + 1, dim, t);
+
+        // fill the data
+        x.row(0).setTo(Scalar(0));
+        y.row(0).setTo(Scalar(0));
+        anglesInDegrees.row(0).setTo(Scalar(0));
+
+        x.row(1).setTo(Scalar(scale));
+        y.row(1).setTo(Scalar(0));
+        anglesInDegrees.row(1).setTo(Scalar(0));
+
+        x.row(2).setTo(Scalar(scale));
+        y.row(2).setTo(Scalar(scale));
+        anglesInDegrees.row(2).setTo(Scalar(45));
+
+        x.row(3).setTo(Scalar(0));
+        y.row(3).setTo(Scalar(scale));
+        anglesInDegrees.row(3).setTo(Scalar(90));
+
+        x.row(4).setTo(Scalar(-scale));
+        y.row(4).setTo(Scalar(scale));
+        anglesInDegrees.row(4).setTo(Scalar(135));
+
+        x.row(5).setTo(Scalar(-scale));
+        y.row(5).setTo(Scalar(0));
+        anglesInDegrees.row(5).setTo(Scalar(180));
+
+        x.row(6).setTo(Scalar(-scale));
+        y.row(6).setTo(Scalar(-scale));
+        anglesInDegrees.row(6).setTo(Scalar(225));
+
+        x.row(7).setTo(Scalar(0));
+        y.row(7).setTo(Scalar(-scale));
+        anglesInDegrees.row(7).setTo(Scalar(270));
+
+        x.row(8).setTo(Scalar(scale));
+        y.row(8).setTo(Scalar(-scale));
+        anglesInDegrees.row(8).setTo(Scalar(315));
+
+        Mat resInRad, resInDeg;
+        phase(x, y, resInRad, false);
+        phase(x, y, resInDeg, true);
+
+        CV_Assert(resInRad.size() == x.size());
+        CV_Assert(resInRad.type() == x.type());
+
+        CV_Assert(resInDeg.size() == x.size());
+        CV_Assert(resInDeg.type() == x.type());
+
+        // check the result
+        int outOfRangeCount = countNonZero((resInDeg > 360) | (resInDeg < 0));
+        if(outOfRangeCount > 0)
+        {
+            ts->printf(cvtest::TS::LOG, "There are result angles that are out of range [0, 360] (part of them is %f)\n",
+                       static_cast<float>(outOfRangeCount)/resInDeg.total());
+            ts->set_failed_test_info(cvtest::TS::FAIL_INVALID_OUTPUT);
+        }
+
+        Mat diff = abs(anglesInDegrees - resInDeg);
+        size_t errDegCount = diff.total() - countNonZero((diff < maxAngleDiff) | ((360 - diff) < maxAngleDiff));
+        if(errDegCount > 0)
+        {
+            ts->printf(cvtest::TS::LOG, "There are incorrect result angles (in degrees) (part of them is %f)\n",
+                       static_cast<float>(errDegCount)/resInDeg.total());
+            ts->set_failed_test_info(cvtest::TS::FAIL_INVALID_OUTPUT);
+        }
+
+        Mat convertedRes = resInRad * 180. / CV_PI;
+        double normDiff = cvtest::norm(convertedRes - resInDeg, NORM_INF);
+        if(normDiff > FLT_EPSILON * 180.)
+        {
+            ts->printf(cvtest::TS::LOG, "There are incorrect result angles (in radians)\n");
+            ts->set_failed_test_info(cvtest::TS::FAIL_INVALID_OUTPUT);
+        }
+
+        ts->set_failed_test_info(cvtest::TS::OK);
+    }
 };
 
-void Core_CheckRange_Empty::run( int )
+TEST(Core_CheckRange_Empty, accuracy)
 {
     cv::Mat m;
     ASSERT_TRUE( cv::checkRange(m) );
 }
 
-TEST(Core_CheckRange_Empty, accuracy) { Core_CheckRange_Empty test; test.safe_run(); }
-
-class Core_CheckRange_INT_MAX : public cvtest::BaseTest
-{
-public:
-    Core_CheckRange_INT_MAX(){}
-    ~Core_CheckRange_INT_MAX(){}
-protected:
-    virtual void run( int start_from );
-};
-
-void Core_CheckRange_INT_MAX::run( int )
+TEST(Core_CheckRange_INT_MAX, accuracy)
 {
     cv::Mat m(3, 3, CV_32SC1, cv::Scalar(INT_MAX));
     ASSERT_FALSE( cv::checkRange(m, true, 0, 0, INT_MAX) );
     ASSERT_TRUE( cv::checkRange(m) );
 }
 
-TEST(Core_CheckRange_INT_MAX, accuracy) { Core_CheckRange_INT_MAX test; test.safe_run(); }
+TEST(Core_CheckRange_INT_MAX1, accuracy)
+{
+    cv::Mat m(3, 3, CV_32SC1, cv::Scalar(INT_MAX));
+    ASSERT_TRUE( cv::checkRange(m, true, 0, 0, INT_MAX+1.0f) );
+    ASSERT_TRUE( cv::checkRange(m) );
+}
 
 template <typename T> class Core_CheckRange : public testing::Test {};
 
@@ -2452,13 +2532,30 @@ TYPED_TEST_P(Core_CheckRange, Negative)
     double min_bound = 4.5;
     double max_bound = 16.0;
 
-    TypeParam data[] = {5, 10, 15, 4, 10, 2, 8, 12, 14};
+    TypeParam data[] = {5, 10, 15, 10, 10, 2, 8, 12, 14};
     cv::Mat src = cv::Mat(3,3, cv::DataDepth<TypeParam>::value, data);
 
     cv::Point bad_pt(0, 0);
 
     ASSERT_FALSE(checkRange(src, true, &bad_pt, min_bound, max_bound));
-    ASSERT_EQ(bad_pt.x, 0);
+    ASSERT_EQ(bad_pt.x, 2);
+    ASSERT_EQ(bad_pt.y, 1);
+}
+
+TYPED_TEST_P(Core_CheckRange, Negative3CN)
+{
+    double min_bound = 4.5;
+    double max_bound = 16.0;
+
+    TypeParam data[] = { 5,  6,  7,   10, 11, 12,   13, 14, 15,
+                        10, 11, 12,   10, 11, 12,    2,  5,  6,
+                         8,  8,  8,   12, 12, 12,   14, 14, 14};
+    cv::Mat src = cv::Mat(3,3, CV_MAKETYPE(cv::DataDepth<TypeParam>::value, 3), data);
+
+    cv::Point bad_pt(0, 0);
+
+    ASSERT_FALSE(checkRange(src, true, &bad_pt, min_bound, max_bound));
+    ASSERT_EQ(bad_pt.x, 2);
     ASSERT_EQ(bad_pt.y, 1);
 }
 
@@ -2497,12 +2594,72 @@ TYPED_TEST_P(Core_CheckRange, Zero)
     double min_bound = 0.0;
     double max_bound = 0.1;
 
-    cv::Mat src = cv::Mat::zeros(3,3, cv::DataDepth<TypeParam>::value);
+    cv::Mat src1 = cv::Mat::zeros(3, 3, cv::DataDepth<TypeParam>::value);
 
-    ASSERT_TRUE( checkRange(src, true, NULL, min_bound, max_bound) );
+    int sizes[] = {5, 6, 7};
+    cv::Mat src2 = cv::Mat::zeros(3, sizes, cv::DataDepth<TypeParam>::value);
+
+    ASSERT_TRUE( checkRange(src1, true, NULL, min_bound, max_bound) );
+    ASSERT_TRUE( checkRange(src2, true, NULL, min_bound, max_bound) );
 }
 
-REGISTER_TYPED_TEST_CASE_P(Core_CheckRange, Negative, Positive, Bounds, Zero);
+TYPED_TEST_P(Core_CheckRange, One)
+{
+    double min_bound = 1.0;
+    double max_bound = 1.1;
+
+    cv::Mat src1 = cv::Mat::ones(3, 3, cv::DataDepth<TypeParam>::value);
+
+    int sizes[] = {5, 6, 7};
+    cv::Mat src2 = cv::Mat::ones(3, sizes, cv::DataDepth<TypeParam>::value);
+
+    ASSERT_TRUE( checkRange(src1, true, NULL, min_bound, max_bound) );
+    ASSERT_TRUE( checkRange(src2, true, NULL, min_bound, max_bound) );
+}
+
+TEST(Core_CheckRange, NaN)
+{
+    float data[] = { 5,  6,  7,   10, 11, 12,   13, 14, 15,
+                    10, 11, 12,   10, 11, 12,   5,  5,  std::numeric_limits<float>::quiet_NaN(),
+                     8,  8,  8,   12, 12, 12,   14, 14, 14};
+    cv::Mat src = cv::Mat(3,3, CV_32FC3, data);
+
+    cv::Point bad_pt(0, 0);
+
+    ASSERT_FALSE(checkRange(src, true, &bad_pt));
+    ASSERT_EQ(bad_pt.x, 2);
+    ASSERT_EQ(bad_pt.y, 1);
+}
+
+TEST(Core_CheckRange, Inf)
+{
+    float data[] = { 5,  6,  7,   10, 11, 12,   13, 14, 15,
+                    10, 11, 12,   10, 11, 12,   5,  5,  std::numeric_limits<float>::infinity(),
+                     8,  8,  8,   12, 12, 12,   14, 14, 14};
+    cv::Mat src = cv::Mat(3,3, CV_32FC3, data);
+
+    cv::Point bad_pt(0, 0);
+
+    ASSERT_FALSE(checkRange(src, true, &bad_pt));
+    ASSERT_EQ(bad_pt.x, 2);
+    ASSERT_EQ(bad_pt.y, 1);
+}
+
+TEST(Core_CheckRange, Inf_Minus)
+{
+    float data[] = { 5,  6,  7,   10, 11, 12,   13, 14, 15,
+                    10, 11, 12,   10, 11, 12,   5,  5,  -std::numeric_limits<float>::infinity(),
+                     8,  8,  8,   12, 12, 12,   14, 14, 14};
+    cv::Mat src = cv::Mat(3,3, CV_32FC3, data);
+
+    cv::Point bad_pt(0, 0);
+
+    ASSERT_FALSE(checkRange(src, true, &bad_pt));
+    ASSERT_EQ(bad_pt.x, 2);
+    ASSERT_EQ(bad_pt.y, 1);
+}
+
+REGISTER_TYPED_TEST_CASE_P(Core_CheckRange, Negative, Negative3CN, Positive, Bounds, Zero, One);
 
 typedef ::testing::Types<signed char,unsigned char, signed short, unsigned short, signed int> mat_data_types;
 INSTANTIATE_TYPED_TEST_CASE_P(Negative_Test, Core_CheckRange, mat_data_types);
@@ -2515,11 +2672,11 @@ TEST(Core_Invert, small)
     cv::Mat b = a.t()*a;
     cv::Mat c, i = Mat_<float>::eye(3, 3);
     cv::invert(b, c, cv::DECOMP_LU); //std::cout << b*c << std::endl;
-    ASSERT_LT( cv::norm(b*c, i, CV_C), 0.1 );
+    ASSERT_LT( cvtest::norm(b*c, i, CV_C), 0.1 );
     cv::invert(b, c, cv::DECOMP_SVD); //std::cout << b*c << std::endl;
-    ASSERT_LT( cv::norm(b*c, i, CV_C), 0.1 );
+    ASSERT_LT( cvtest::norm(b*c, i, CV_C), 0.1 );
     cv::invert(b, c, cv::DECOMP_CHOLESKY); //std::cout << b*c << std::endl;
-    ASSERT_LT( cv::norm(b*c, i, CV_C), 0.1 );
+    ASSERT_LT( cvtest::norm(b*c, i, CV_C), 0.1 );
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2540,7 +2697,8 @@ TEST(Core_SVD, accuracy) { Core_SVDTest test; test.safe_run(); }
 TEST(Core_SVBkSb, accuracy) { Core_SVBkSbTest test; test.safe_run(); }
 TEST(Core_Trace, accuracy) { Core_TraceTest test; test.safe_run(); }
 TEST(Core_SolvePoly, accuracy) { Core_SolvePolyTest test; test.safe_run(); }
-
+TEST(Core_Phase, accuracy32f) { Core_PhaseTest test(CV_32FC1); test.safe_run(); }
+TEST(Core_Phase, accuracy64f) { Core_PhaseTest test(CV_64FC1); test.safe_run(); }
 
 TEST(Core_SVD, flt)
 {
@@ -2566,7 +2724,7 @@ TEST(Core_SVD, flt)
     Mat X, B1;
     solve(A, B, X, DECOMP_SVD);
     B1 = A*X;
-    EXPECT_LE(norm(B1, B, NORM_L2 + NORM_RELATIVE), FLT_EPSILON*10);
+    EXPECT_LE(cvtest::norm(B1, B, NORM_L2 + NORM_RELATIVE), FLT_EPSILON*10);
 }
 
 
@@ -2590,20 +2748,22 @@ public:
 protected:
     void run(int inVariant)
     {
+        RNG& rng = ts->get_rng();
         int i, iter = 0, N = 0, N0 = 0, K = 0, dims = 0;
         Mat labels;
-        try
+
         {
-            RNG& rng = theRNG();
             const int MAX_DIM=5;
             int MAX_POINTS = 100, maxIter = 100;
             for( iter = 0; iter < maxIter; iter++ )
             {
                 ts->update_context(this, iter, true);
                 dims = rng.uniform(inVariant == MAT_1_N_CDIM ? 2 : 1, MAX_DIM+1);
-                N = rng.uniform(1, MAX_POINTS+1);
+                N = rng.uniform(2, MAX_POINTS+1);
                 N0 = rng.uniform(1, MAX(N/10, 2));
                 K = rng.uniform(1, N+1);
+
+                Mat centers;
 
                 if (inVariant == VECTOR)
                 {
@@ -2617,7 +2777,7 @@ protected:
                         data[i] = data0[rng.uniform(0, N0)];
 
                     kmeans(data, K, labels, TermCriteria(TermCriteria::MAX_ITER+TermCriteria::EPS, 30, 0),
-                           5, KMEANS_PP_CENTERS);
+                           5, KMEANS_PP_CENTERS, centers);
                 }
                 else
                 {
@@ -2643,7 +2803,7 @@ protected:
                     case MAT_1_N_CDIM:
                         data.create(1, N, CV_32FC(dims));
                         for( i = 0; i < N; i++ )
-                            memcpy(data.data + i * dims * sizeof(float), data0.ptr(rng.uniform(0, N0)), dims * sizeof(float));
+                            memcpy(data.ptr() + i * dims * sizeof(float), data0.ptr(rng.uniform(0, N0)), dims * sizeof(float));
                         break;
 
                     case MAT_N_DIM_C1_NONCONT:
@@ -2662,27 +2822,23 @@ protected:
                     }
 
                     kmeans(data, K, labels, TermCriteria(TermCriteria::MAX_ITER+TermCriteria::EPS, 30, 0),
-                           5, KMEANS_PP_CENTERS);
+                           5, KMEANS_PP_CENTERS, centers);
                 }
+
+                ASSERT_EQ(centers.rows, K);
+                ASSERT_EQ(labels.rows, N);
 
                 Mat hist(K, 1, CV_32S, Scalar(0));
                 for( i = 0; i < N; i++ )
                 {
                     int l = labels.at<int>(i);
-                    CV_Assert(0 <= l && l < K);
+                    ASSERT_GE(l, 0);
+                    ASSERT_LT(l, K);
                     hist.at<int>(l)++;
                 }
                 for( i = 0; i < K; i++ )
-                    CV_Assert( hist.at<int>(i) != 0 );
+                    ASSERT_GT(hist.at<int>(i), 0);
             }
-        }
-        catch(...)
-        {
-            ts->printf(cvtest::TS::LOG,
-                       "context: iteration=%d, N=%d, N0=%d, K=%d\n",
-                       iter, N, N0, K);
-            std::cout << labels << std::endl;
-            ts->set_failed_test_info(cvtest::TS::FAIL_MISMATCH);
         }
     }
 };
@@ -2700,6 +2856,35 @@ TEST_P(Core_KMeans_InputVariants, singular)
 }
 
 INSTANTIATE_TEST_CASE_P(AllVariants, Core_KMeans_InputVariants, KMeansInputVariant::all());
+
+TEST(Core_KMeans, compactness)
+{
+    const int N = 1024;
+    const int attempts = 4;
+    const TermCriteria crit = TermCriteria(TermCriteria::COUNT, 5, 0); // low number of iterations
+    cvtest::TS& ts = *cvtest::TS::ptr();
+    for (int K = 1; K <= N; K *= 2)
+    {
+        Mat data(N, 1, CV_32FC2);
+        cvtest::randUni(ts.get_rng(), data, Scalar(-200, -200), Scalar(200, 200));
+        Mat labels, centers;
+        double compactness = kmeans(data, K, labels, crit, attempts, KMEANS_PP_CENTERS, centers);
+        centers = centers.reshape(2);
+        EXPECT_EQ(labels.rows, N);
+        EXPECT_EQ(centers.rows, K);
+        EXPECT_GE(compactness, 0.0);
+        double expected = 0.0;
+        for (int i = 0; i < N; ++i)
+        {
+            int l = labels.at<int>(i);
+            Point2f d = data.at<Point2f>(i) - centers.at<Point2f>(l);
+            expected += d.x * d.x + d.y * d.y;
+        }
+        EXPECT_NEAR(expected, compactness, expected * 1e-8);
+        if (K == N)
+            EXPECT_DOUBLE_EQ(compactness, 0.0);
+    }
+}
 
 TEST(CovariationMatrixVectorOfMat, accuracy)
 {
@@ -2765,6 +2950,122 @@ TEST(CovariationMatrixVectorOfMatWithMean, accuracy)
     cv::absdiff(goldMean, actualMean.reshape(0,1), meanDiff);
     cv::Scalar sDiff = cv::sum(meanDiff);
     ASSERT_EQ(sDiff.dot(sDiff), 0.0);
+}
+
+TEST(Core_Pow, special)
+{
+    for( int i = 0; i < 100; i++ )
+    {
+        int n = theRNG().uniform(1, 30);
+        Mat mtx0(1, n, CV_8S), mtx, result;
+        randu(mtx0, -5, 5);
+
+        int type = theRNG().uniform(0, 2) ? CV_64F : CV_32F;
+        double eps = type == CV_32F ? 1e-3 : 1e-10;
+        mtx0.convertTo(mtx, type);
+        // generate power from [-n, n] interval with 1/8 step - enough to check various cases.
+        const int max_pf = 3;
+        int pf = theRNG().uniform(0, max_pf*2+1);
+        double power = ((1 << pf) - (1 << (max_pf*2-1)))/16.;
+        int ipower = cvRound(power);
+        bool is_ipower = ipower == power;
+        cv::pow(mtx, power, result);
+        for( int j = 0; j < n; j++ )
+        {
+            double val = type == CV_32F ? (double)mtx.at<float>(j) : mtx.at<double>(j);
+            double r = type == CV_32F ? (double)result.at<float>(j) : result.at<double>(j);
+            double r0;
+            if( power == 0. )
+                r0 = 1;
+            else if( is_ipower )
+            {
+                r0 = 1;
+                for( int k = 0; k < std::abs(ipower); k++ )
+                    r0 *= val;
+                if( ipower < 0 )
+                    r0 = 1./r0;
+            }
+            else
+                r0 = std::pow(val, power);
+            if( cvIsInf(r0) )
+            {
+                ASSERT_TRUE(cvIsInf(r) != 0);
+            }
+            else if( cvIsNaN(r0) )
+            {
+                ASSERT_TRUE(cvIsNaN(r) != 0);
+            }
+            else
+            {
+                ASSERT_TRUE(cvIsInf(r) == 0 && cvIsNaN(r) == 0);
+                ASSERT_LT(fabs(r - r0), eps);
+            }
+        }
+    }
+}
+
+TEST(Core_Cholesky, accuracy64f)
+{
+    const int n = 5;
+    Mat A(n, n, CV_64F), refA;
+    Mat mean(1, 1, CV_64F);
+    *mean.ptr<double>() = 10.0;
+    Mat dev(1, 1, CV_64F);
+    *dev.ptr<double>() = 10.0;
+    RNG rng(10);
+    rng.fill(A, RNG::NORMAL, mean, dev);
+    A = A*A.t();
+    A.copyTo(refA);
+    Cholesky(A.ptr<double>(), A.step, n, NULL, 0, 0);
+
+   for (int i = 0; i < A.rows; i++)
+       for (int j = i + 1; j < A.cols; j++)
+           A.at<double>(i, j) = 0.0;
+   EXPECT_LE(norm(refA, A*A.t(), CV_RELATIVE_L2), FLT_EPSILON);
+}
+
+TEST(Core_QR_Solver, accuracy64f)
+{
+    int m = 20, n = 18;
+    Mat A(m, m, CV_64F);
+    Mat B(m, n, CV_64F);
+    Mat mean(1, 1, CV_64F);
+    *mean.ptr<double>() = 10.0;
+    Mat dev(1, 1, CV_64F);
+    *dev.ptr<double>() = 10.0;
+    RNG rng(10);
+    rng.fill(A, RNG::NORMAL, mean, dev);
+    rng.fill(B, RNG::NORMAL, mean, dev);
+    A = A*A.t();
+    Mat solutionQR;
+
+    //solve system with square matrix
+    solve(A, B, solutionQR, DECOMP_QR);
+    EXPECT_LE(norm(A*solutionQR, B, CV_RELATIVE_L2), FLT_EPSILON);
+
+    A = Mat(m, n, CV_64F);
+    B = Mat(m, n, CV_64F);
+    rng.fill(A, RNG::NORMAL, mean, dev);
+    rng.fill(B, RNG::NORMAL, mean, dev);
+
+    //solve normal system
+    solve(A, B, solutionQR, DECOMP_QR | DECOMP_NORMAL);
+    EXPECT_LE(norm(A.t()*(A*solutionQR), A.t()*B, CV_RELATIVE_L2), FLT_EPSILON);
+
+    //solve overdeterminated system as a least squares problem
+    Mat solutionSVD;
+    solve(A, B, solutionQR, DECOMP_QR);
+    solve(A, B, solutionSVD, DECOMP_SVD);
+    EXPECT_LE(norm(solutionQR, solutionSVD, CV_RELATIVE_L2), FLT_EPSILON);
+
+    //solve system with singular matrix
+    A = Mat(10, 10, CV_64F);
+    B = Mat(10, 1, CV_64F);
+    rng.fill(A, RNG::NORMAL, mean, dev);
+    rng.fill(B, RNG::NORMAL, mean, dev);
+    for (int i = 0; i < A.cols; i++)
+      A.at<double>(0, i) = A.at<double>(1, i);
+    ASSERT_FALSE(solve(A, B, solutionQR, DECOMP_QR));
 }
 
 /* End of file. */

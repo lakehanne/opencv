@@ -4,7 +4,7 @@
  * @author Ozan Cagri Tonkal
  */
 
-#include <opencv2/viz/vizcore.hpp>
+#include <opencv2/viz.hpp>
 #include <iostream>
 
 using namespace cv;
@@ -14,7 +14,7 @@ using namespace std;
  * @function help
  * @brief Display instructions to use this tutorial program
  */
-void help()
+static void help()
 {
     cout
     << "--------------------------------------------------------------------------" << endl

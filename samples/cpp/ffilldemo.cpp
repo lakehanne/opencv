@@ -1,5 +1,7 @@
-#include "opencv2/imgproc/imgproc.hpp"
-#include "opencv2/highgui/highgui.hpp"
+#include "opencv2/imgproc.hpp"
+#include "opencv2/imgcodecs.hpp"
+#include "opencv2/videoio.hpp"
+#include "opencv2/highgui.hpp"
 
 #include <iostream>
 
@@ -10,7 +12,7 @@ static void help()
 {
     cout << "\nThis program demonstrated the floodFill() function\n"
             "Call:\n"
-            "./ffilldemo [image_name -- Default: fruits.jpg]\n" << endl;
+            "./ffilldemo [image_name -- Default: ../data/fruits.jpg]\n" << endl;
 
     cout << "Hot keys: \n"
             "\tESC - quit the program\n"
@@ -34,14 +36,14 @@ int newMaskVal = 255;
 
 static void onMouse( int event, int x, int y, int, void* )
 {
-    if( event != CV_EVENT_LBUTTONDOWN )
+    if( event != EVENT_LBUTTONDOWN )
         return;
 
     Point seed = Point(x,y);
     int lo = ffillMode == 0 ? 0 : loDiff;
     int up = ffillMode == 0 ? 0 : upDiff;
     int flags = connectivity + (newMaskVal << 8) +
-                (ffillMode == 1 ? CV_FLOODFILL_FIXED_RANGE : 0);
+                (ffillMode == 1 ? FLOODFILL_FIXED_RANGE : 0);
     int b = (unsigned)theRNG() & 255;
     int g = (unsigned)theRNG() & 255;
     int r = (unsigned)theRNG() & 255;
@@ -53,7 +55,7 @@ static void onMouse( int event, int x, int y, int, void* )
 
     if( useMask )
     {
-        threshold(mask, mask, 1, 128, CV_THRESH_BINARY);
+        threshold(mask, mask, 1, 128, THRESH_BINARY);
         area = floodFill(dst, mask, seed, newVal, &ccomp, Scalar(lo, lo, lo),
                   Scalar(up, up, up), flags);
         imshow( "mask", mask );
@@ -71,12 +73,21 @@ static void onMouse( int event, int x, int y, int, void* )
 
 int main( int argc, char** argv )
 {
-    char* filename = argc >= 2 ? argv[1] : (char*)"fruits.jpg";
+    cv::CommandLineParser parser (argc, argv,
+        "{help h | | show help message}{@image|../data/fruits.jpg| input image}"
+    );
+    if (parser.has("help"))
+    {
+        parser.printMessage();
+        return 0;
+    }
+    string filename = parser.get<string>("@image");
     image0 = imread(filename, 1);
 
     if( image0.empty() )
     {
-        cout << "Image empty. Usage: ffilldemo <image_name>\n";
+        cout << "Image empty\n";
+        parser.printMessage();
         return 0;
     }
     help();
@@ -94,13 +105,13 @@ int main( int argc, char** argv )
     {
         imshow("image", isColor ? image : gray);
 
-        int c = waitKey(0);
-        if( (c & 255) == 27 )
+        char c = (char)waitKey(0);
+        if( c == 27 )
         {
             cout << "Exiting ...\n";
             break;
         }
-        switch( (char)c )
+        switch( c )
         {
         case 'c':
             if( isColor )

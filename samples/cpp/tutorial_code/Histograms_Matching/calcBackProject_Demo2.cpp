@@ -4,8 +4,9 @@
  * @author OpenCV team
  */
 
-#include "opencv2/imgproc/imgproc.hpp"
-#include "opencv2/highgui/highgui.hpp"
+#include "opencv2/imgproc.hpp"
+#include "opencv2/imgcodecs.hpp"
+#include "opencv2/highgui.hpp"
 
 #include <iostream>
 
@@ -29,7 +30,7 @@ void pickPoint (int event, int x, int y, int, void* );
 int main( int, char** argv )
 {
   /// Read the image
-  src = imread( argv[1], 1 );
+  src = imread( argv[1], IMREAD_COLOR );
   /// Transform it to HSV
   cvtColor( src, hsv, COLOR_BGR2HSV );
 
@@ -52,7 +53,7 @@ int main( int, char** argv )
  */
 void pickPoint (int event, int x, int y, int, void* )
 {
-  if( event != CV_EVENT_LBUTTONDOWN )
+  if( event != EVENT_LBUTTONDOWN )
     { return; }
 
   // Fill and get the mask

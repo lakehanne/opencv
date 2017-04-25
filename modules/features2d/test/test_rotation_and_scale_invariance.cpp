@@ -40,7 +40,6 @@
 //M*/
 
 #include "test_precomp.hpp"
-#include "opencv2/highgui/highgui.hpp"
 
 using namespace std;
 using namespace cv;
@@ -48,7 +47,7 @@ using namespace cv;
 const string IMAGE_TSUKUBA = "/features2d/tsukuba.png";
 const string IMAGE_BIKES = "/detectors_descriptors_evaluation/images_datasets/bikes/img1.png";
 
-#define SHOW_DEBUG_LOG 0
+#define SHOW_DEBUG_LOG 1
 
 static
 Mat generateHomography(float angle)
@@ -64,7 +63,7 @@ Mat generateHomography(float angle)
 }
 
 static
-Mat rotateImage(const Mat& srcImage, float angle, Mat& dstImage, Mat& dstMask)
+Mat rotateImage(const Mat& srcImage, const Mat& srcMask, float angle, Mat& dstImage, Mat& dstMask)
 {
     // angle - rotation around Oz in degrees
     float diag = std::sqrt(static_cast<float>(srcImage.cols * srcImage.cols + srcImage.rows * srcImage.rows));
@@ -75,8 +74,6 @@ Mat rotateImage(const Mat& srcImage, float angle, Mat& dstImage, Mat& dstMask)
     RDShift.at<float>(0,2) = diag/2;
     RDShift.at<float>(1,2) = diag/2;
     Size sz(cvRound(diag), cvRound(diag));
-
-    Mat srcMask(srcImage.size(), CV_8UC1, Scalar(255));
 
     Mat H = RDShift * generateHomography(angle) * LUShift;
     warpPerspective(srcImage, dstImage, H, sz);
@@ -196,7 +193,7 @@ public:
         minKeyPointMatchesRatio(_minKeyPointMatchesRatio),
         minAngleInliersRatio(_minAngleInliersRatio)
     {
-        CV_Assert(!featureDetector.empty());
+        CV_Assert(featureDetector);
     }
 
 protected:
@@ -213,16 +210,22 @@ protected:
             ts->set_failed_test_info(cvtest::TS::FAIL_INVALID_TEST_DATA);
             return;
         }
+        std::cout << "Image: " << image0.size() << std::endl;
+
+        const int borderSize = 16;
+        Mat mask0(image0.size(), CV_8UC1, Scalar(0));
+        mask0(Rect(borderSize, borderSize, mask0.cols - 2*borderSize, mask0.rows - 2*borderSize)).setTo(Scalar(255));
 
         vector<KeyPoint> keypoints0;
-        featureDetector->detect(image0, keypoints0);
+        featureDetector->detect(image0, keypoints0, mask0);
+        std::cout << "Intial keypoints: " << keypoints0.size() << std::endl;
         if(keypoints0.size() < 15)
-            CV_Error(CV_StsAssert, "Detector gives too few points in a test image\n");
+            CV_Error(Error::StsAssert, "Detector gives too few points in a test image\n");
 
         const int maxAngle = 360, angleStep = 15;
         for(int angle = 0; angle < maxAngle; angle += angleStep)
         {
-            Mat H = rotateImage(image0, static_cast<float>(angle), image1, mask1);
+            Mat H = rotateImage(image0, mask0, static_cast<float>(angle), image1, mask1);
 
             vector<KeyPoint> keypoints1;
             featureDetector->detect(image1, keypoints1, mask1);
@@ -246,7 +249,7 @@ protected:
                 float angle0 = keypoints0[matches[m].queryIdx].angle;
                 float angle1 = keypoints1[matches[m].trainIdx].angle;
                 if(angle0 == -1 || angle1 == -1)
-                    CV_Error(CV_StsBadArg, "Given FeatureDetector is not rotation invariant, it can not be tested here.\n");
+                    CV_Error(Error::StsBadArg, "Given FeatureDetector is not rotation invariant, it can not be tested here.\n");
                 CV_Assert(angle0 >= 0.f && angle0 < 360.f);
                 CV_Assert(angle1 >= 0.f && angle1 < 360.f);
 
@@ -265,10 +268,9 @@ protected:
             float keyPointMatchesRatio = static_cast<float>(keyPointMatchesCount) / keypoints0.size();
             if(keyPointMatchesRatio < minKeyPointMatchesRatio)
             {
-                ts->printf(cvtest::TS::LOG, "Incorrect keyPointMatchesRatio: curr = %f, min = %f.\n",
-                           keyPointMatchesRatio, minKeyPointMatchesRatio);
+                ts->printf(cvtest::TS::LOG, "Angle: %f: Incorrect keyPointMatchesRatio: curr = %f, min = %f (matched=%d total=%d - %d).\n",
+                           (float)angle, keyPointMatchesRatio, minKeyPointMatchesRatio, (int)keyPointMatchesCount, (int)keypoints0.size(), (int)keypoints1.size());
                 ts->set_failed_test_info(cvtest::TS::FAIL_BAD_ACCURACY);
-                return;
             }
 
             if(keyPointMatchesCount)
@@ -276,15 +278,18 @@ protected:
                 float angleInliersRatio = static_cast<float>(angleInliersCount) / keyPointMatchesCount;
                 if(angleInliersRatio < minAngleInliersRatio)
                 {
-                    ts->printf(cvtest::TS::LOG, "Incorrect angleInliersRatio: curr = %f, min = %f.\n",
-                               angleInliersRatio, minAngleInliersRatio);
+                    ts->printf(cvtest::TS::LOG, "Angle: %f: Incorrect angleInliersRatio: curr = %f, min = %f.\n",
+                               (float)angle, angleInliersRatio, minAngleInliersRatio);
                     ts->set_failed_test_info(cvtest::TS::FAIL_BAD_ACCURACY);
-                    return;
                 }
             }
 #if SHOW_DEBUG_LOG
-            std::cout << "keyPointMatchesRatio - " << keyPointMatchesRatio
-                << " - angleInliersRatio " << static_cast<float>(angleInliersCount) / keyPointMatchesCount << std::endl;
+            std::cout
+                << "angle = " << angle
+                << ", keypoints = " << keypoints1.size()
+                << ", keyPointMatchesRatio = " << keyPointMatchesRatio
+                << ", angleInliersRatio = " << (keyPointMatchesCount ? (static_cast<float>(angleInliersCount) / keyPointMatchesCount) : 0)
+                << std::endl;
 #endif
         }
         ts->set_failed_test_info( cvtest::TS::OK );
@@ -307,8 +312,8 @@ public:
         normType(_normType),
         minDescInliersRatio(_minDescInliersRatio)
     {
-        CV_Assert(!featureDetector.empty());
-        CV_Assert(!descriptorExtractor.empty());
+        CV_Assert(featureDetector);
+        CV_Assert(descriptorExtractor);
     }
 
 protected:
@@ -325,12 +330,18 @@ protected:
             ts->set_failed_test_info(cvtest::TS::FAIL_INVALID_TEST_DATA);
             return;
         }
+        std::cout << "Image: " << image0.size() << std::endl;
+
+        const int borderSize = 16;
+        Mat mask0(image0.size(), CV_8UC1, Scalar(0));
+        mask0(Rect(borderSize, borderSize, mask0.cols - 2*borderSize, mask0.rows - 2*borderSize)).setTo(Scalar(255));
 
         vector<KeyPoint> keypoints0;
         Mat descriptors0;
-        featureDetector->detect(image0, keypoints0);
+        featureDetector->detect(image0, keypoints0, mask0);
+        std::cout << "Intial keypoints: " << keypoints0.size() << std::endl;
         if(keypoints0.size() < 15)
-            CV_Error(CV_StsAssert, "Detector gives too few points in a test image\n");
+            CV_Error(Error::StsAssert, "Detector gives too few points in a test image\n");
         descriptorExtractor->compute(image0, keypoints0, descriptors0);
 
         BFMatcher bfmatcher(normType);
@@ -339,7 +350,7 @@ protected:
         const int maxAngle = 360, angleStep = 15;
         for(int angle = 0; angle < maxAngle; angle += angleStep)
         {
-            Mat H = rotateImage(image0, static_cast<float>(angle), image1, mask1);
+            Mat H = rotateImage(image0, mask0, static_cast<float>(angle), image1, mask1);
 
             vector<KeyPoint> keypoints1;
             rotateKeyPoints(keypoints0, H, static_cast<float>(angle), keypoints1);
@@ -370,7 +381,11 @@ protected:
                 return;
             }
 #if SHOW_DEBUG_LOG
-            std::cout << "descInliersRatio " << static_cast<float>(descInliersCount) / keypoints0.size() << std::endl;
+            std::cout
+                << "angle = " << angle
+                << ", keypoints = " << keypoints1.size()
+                << ", descInliersRatio = " << static_cast<float>(descInliersCount) / keypoints0.size()
+                << std::endl;
 #endif
         }
         ts->set_failed_test_info( cvtest::TS::OK );
@@ -392,7 +407,7 @@ public:
         minKeyPointMatchesRatio(_minKeyPointMatchesRatio),
         minScaleInliersRatio(_minScaleInliersRatio)
     {
-        CV_Assert(!featureDetector.empty());
+        CV_Assert(featureDetector);
     }
 
 protected:
@@ -413,7 +428,7 @@ protected:
         vector<KeyPoint> keypoints0;
         featureDetector->detect(image0, keypoints0);
         if(keypoints0.size() < 15)
-            CV_Error(CV_StsAssert, "Detector gives too few points in a test image\n");
+            CV_Error(Error::StsAssert, "Detector gives too few points in a test image\n");
 
         for(int scaleIdx = 1; scaleIdx <= 3; scaleIdx++)
         {
@@ -424,7 +439,7 @@ protected:
             vector<KeyPoint> keypoints1, osiKeypoints1; // osi - original size image
             featureDetector->detect(image1, keypoints1);
             if(keypoints1.size() < 15)
-                CV_Error(CV_StsAssert, "Detector gives too few points in a test image\n");
+                CV_Error(Error::StsAssert, "Detector gives too few points in a test image\n");
 
             if(keypoints1.size() > keypoints0.size())
             {
@@ -486,8 +501,11 @@ protected:
                 }
             }
 #if SHOW_DEBUG_LOG
-            std::cout << "keyPointMatchesRatio - " << keyPointMatchesRatio
-                << " - scaleInliersRatio " << static_cast<float>(scaleInliersCount) / keyPointMatchesCount << std::endl;
+            std::cout
+                << "scale = " << scale
+                << ", keyPointMatchesRatio = " << keyPointMatchesRatio
+                << ", scaleInliersRatio = " << (keyPointMatchesCount ? static_cast<float>(scaleInliersCount) / keyPointMatchesCount : 0)
+                << std::endl;
 #endif
         }
         ts->set_failed_test_info( cvtest::TS::OK );
@@ -510,8 +528,8 @@ public:
         normType(_normType),
         minDescInliersRatio(_minDescInliersRatio)
     {
-        CV_Assert(!featureDetector.empty());
-        CV_Assert(!descriptorExtractor.empty());
+        CV_Assert(featureDetector);
+        CV_Assert(descriptorExtractor);
     }
 
 protected:
@@ -532,7 +550,7 @@ protected:
         vector<KeyPoint> keypoints0;
         featureDetector->detect(image0, keypoints0);
         if(keypoints0.size() < 15)
-            CV_Error(CV_StsAssert, "Detector gives too few points in a test image\n");
+            CV_Error(Error::StsAssert, "Detector gives too few points in a test image\n");
         Mat descriptors0;
         descriptorExtractor->compute(image0, keypoints0, descriptors0);
 
@@ -574,7 +592,10 @@ protected:
                 return;
             }
 #if SHOW_DEBUG_LOG
-            std::cout << "descInliersRatio " << static_cast<float>(descInliersCount) / keypoints0.size() << std::endl;
+            std::cout
+                << "scale = " << scale
+                << ", descInliersRatio = " << static_cast<float>(descInliersCount) / keypoints0.size()
+                << std::endl;
 #endif
         }
         ts->set_failed_test_info( cvtest::TS::OK );
@@ -595,16 +616,16 @@ protected:
 
 TEST(Features2d_RotationInvariance_Detector_BRISK, regression)
 {
-    DetectorRotationInvarianceTest test(Algorithm::create<FeatureDetector>("Feature2D.BRISK"),
-                                        0.32f,
+    DetectorRotationInvarianceTest test(BRISK::create(),
+                                        0.45f,
                                         0.76f);
     test.safe_run();
 }
 
 TEST(Features2d_RotationInvariance_Detector_ORB, regression)
 {
-    DetectorRotationInvarianceTest test(Algorithm::create<FeatureDetector>("Feature2D.ORB"),
-                                        0.47f,
+    DetectorRotationInvarianceTest test(ORB::create(),
+                                        0.5f,
                                         0.76f);
     test.safe_run();
 }
@@ -615,19 +636,15 @@ TEST(Features2d_RotationInvariance_Detector_ORB, regression)
 
 TEST(Features2d_RotationInvariance_Descriptor_BRISK, regression)
 {
-    DescriptorRotationInvarianceTest test(Algorithm::create<FeatureDetector>("Feature2D.BRISK"),
-                      Algorithm::create<DescriptorExtractor>("Feature2D.BRISK"),
-                        NORM_HAMMING,
-                                          0.99f);
+    Ptr<Feature2D> f2d = BRISK::create();
+    DescriptorRotationInvarianceTest test(f2d, f2d, f2d->defaultNorm(), 0.99f);
     test.safe_run();
 }
 
 TEST(Features2d_RotationInvariance_Descriptor_ORB, regression)
 {
-    DescriptorRotationInvarianceTest test(Algorithm::create<FeatureDetector>("Feature2D.ORB"),
-                                          Algorithm::create<DescriptorExtractor>("Feature2D.ORB"),
-                                          NORM_HAMMING,
-                                          0.99f);
+    Ptr<Feature2D> f2d = ORB::create();
+    DescriptorRotationInvarianceTest test(f2d, f2d, f2d->defaultNorm(), 0.99f);
     test.safe_run();
 }
 
@@ -635,7 +652,7 @@ TEST(Features2d_RotationInvariance_Descriptor_ORB, regression)
 //{
 //    DescriptorRotationInvarianceTest test(Algorithm::create<FeatureDetector>("Feature2D.ORB"),
 //                                          Algorithm::create<DescriptorExtractor>("Feature2D.FREAK"),
-//                                          NORM_HAMMING,
+//                                          Algorithm::create<DescriptorExtractor>("Feature2D.FREAK")->defaultNorm(),
 //                                          0.f);
 //    test.safe_run();
 //}
@@ -646,19 +663,27 @@ TEST(Features2d_RotationInvariance_Descriptor_ORB, regression)
 
 TEST(Features2d_ScaleInvariance_Detector_BRISK, regression)
 {
-    DetectorScaleInvarianceTest test(Algorithm::create<FeatureDetector>("Feature2D.BRISK"),
-                                     0.08f,
-                                     0.49f);
+    DetectorScaleInvarianceTest test(BRISK::create(), 0.08f, 0.49f);
     test.safe_run();
 }
 
-//TEST(Features2d_ScaleInvariance_Detector_ORB, regression)
-//{
-//    DetectorScaleInvarianceTest test(Algorithm::create<FeatureDetector>("Feature2D.ORB"),
-//                                     0.22f,
-//                                     0.83f);
-//    test.safe_run();
-//}
+TEST(Features2d_ScaleInvariance_Detector_KAZE, regression)
+{
+    DetectorScaleInvarianceTest test(KAZE::create(), 0.08f, 0.49f);
+    test.safe_run();
+}
+
+TEST(Features2d_ScaleInvariance_Detector_AKAZE, regression)
+{
+    DetectorScaleInvarianceTest test(AKAZE::create(), 0.08f, 0.49f);
+    test.safe_run();
+}
+
+TEST(Features2d_ScaleInvariance_Detector_ORB, regression)
+{
+    DetectorScaleInvarianceTest test(ORB::create(), 0.08f, 0.49f);
+    test.safe_run();
+}
 
 /*
  * Descriptor's scale invariance check
@@ -667,26 +692,26 @@ TEST(Features2d_ScaleInvariance_Detector_BRISK, regression)
 //TEST(Features2d_ScaleInvariance_Descriptor_BRISK, regression)
 //{
 //    DescriptorScaleInvarianceTest test(Algorithm::create<FeatureDetector>("Feature2D.BRISK"),
-//                   Algorithm::create<DescriptorExtractor>("Feature2D.BRISK"),
-//                   NORM_HAMMING,
-//                                     0.99f);
+//                                       Algorithm::create<DescriptorExtractor>("Feature2D.BRISK"),
+//                                       Algorithm::create<DescriptorExtractor>("Feature2D.BRISK")->defaultNorm(),
+//                                       0.99f);
 //    test.safe_run();
 //}
 
 //TEST(Features2d_ScaleInvariance_Descriptor_ORB, regression)
 //{
 //    DescriptorScaleInvarianceTest test(Algorithm::create<FeatureDetector>("Feature2D.ORB"),
-//									 Algorithm::create<DescriptorExtractor>("Feature2D.ORB"),
-//									 NORM_HAMMING,
-//                                     0.01f);
+//                                       Algorithm::create<DescriptorExtractor>("Feature2D.ORB"),
+//                                       Algorithm::create<DescriptorExtractor>("Feature2D.ORB")->defaultNorm(),
+//                                       0.01f);
 //    test.safe_run();
 //}
 
 //TEST(Features2d_ScaleInvariance_Descriptor_FREAK, regression)
 //{
 //    DescriptorScaleInvarianceTest test(Algorithm::create<FeatureDetector>("Feature2D.ORB"),
-//                                     Algorithm::create<DescriptorExtractor>("Feature2D.FREAK"),
-//                                     NORM_HAMMING,
-//                                     0.01f);
+//                                       Algorithm::create<DescriptorExtractor>("Feature2D.FREAK"),
+//                                       Algorithm::create<DescriptorExtractor>("Feature2D.FREAK")->defaultNorm(),
+//                                       0.01f);
 //    test.safe_run();
 //}

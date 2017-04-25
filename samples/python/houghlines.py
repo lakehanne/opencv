@@ -1,58 +1,54 @@
 #!/usr/bin/python
-# This is a standalone program. Pass an image name as a first parameter of the program.
 
+'''
+This example illustrates how to use Hough Transform to find lines
+
+Usage:
+    houghlines.py [<image_name>]
+    image argument defaults to ../data/pic1.png
+'''
+
+# Python 2/3 compatibility
+from __future__ import print_function
+
+import cv2
+import numpy as np
 import sys
-from math import sin, cos, sqrt, pi
-import cv2.cv as cv
-import urllib2
+import math
 
-# toggle between CV_HOUGH_STANDARD and CV_HOUGH_PROBILISTIC
-USE_STANDARD = True
+if __name__ == '__main__':
+    print(__doc__)
 
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        filename = sys.argv[1]
-        src = cv.LoadImage(filename, cv.CV_LOAD_IMAGE_GRAYSCALE)
-    else:
-        url = 'https://raw.github.com/Itseez/opencv/master/samples/cpp/building.jpg'
-        filedata = urllib2.urlopen(url).read()
-        imagefiledata = cv.CreateMatHeader(1, len(filedata), cv.CV_8UC1)
-        cv.SetData(imagefiledata, filedata, len(filedata))
-        src = cv.DecodeImageM(imagefiledata, cv.CV_LOAD_IMAGE_GRAYSCALE)
+    try:
+        fn = sys.argv[1]
+    except IndexError:
+        fn = "../data/pic1.png"
 
+    src = cv2.imread(fn)
+    dst = cv2.Canny(src, 50, 200)
+    cdst = cv2.cvtColor(dst, cv2.COLOR_GRAY2BGR)
 
-    cv.NamedWindow("Source", 1)
-    cv.NamedWindow("Hough", 1)
+    if True: # HoughLinesP
+        lines = cv2.HoughLinesP(dst, 1, math.pi/180.0, 40, np.array([]), 50, 10)
+        a,b,c = lines.shape
+        for i in range(a):
+            cv2.line(cdst, (lines[i][0][0], lines[i][0][1]), (lines[i][0][2], lines[i][0][3]), (0, 0, 255), 3, cv2.LINE_AA)
 
-    while True:
-        dst = cv.CreateImage(cv.GetSize(src), 8, 1)
-        color_dst = cv.CreateImage(cv.GetSize(src), 8, 3)
-        storage = cv.CreateMemStorage(0)
-        lines = 0
-        cv.Canny(src, dst, 50, 200, 3)
-        cv.CvtColor(dst, color_dst, cv.CV_GRAY2BGR)
+    else:    # HoughLines
+        lines = cv2.HoughLines(dst, 1, math.pi/180.0, 50, np.array([]), 0, 0)
+        if lines is not None:
+            a,b,c = lines.shape
+            for i in range(a):
+                rho = lines[i][0][0]
+                theta = lines[i][0][1]
+                a = math.cos(theta)
+                b = math.sin(theta)
+                x0, y0 = a*rho, b*rho
+                pt1 = ( int(x0+1000*(-b)), int(y0+1000*(a)) )
+                pt2 = ( int(x0-1000*(-b)), int(y0-1000*(a)) )
+                cv2.line(cdst, pt1, pt2, (0, 0, 255), 3, cv2.LINE_AA)
 
-        if USE_STANDARD:
-            lines = cv.HoughLines2(dst, storage, cv.CV_HOUGH_STANDARD, 1, pi / 180, 100, 0, 0)
-            for (rho, theta) in lines[:100]:
-                a = cos(theta)
-                b = sin(theta)
-                x0 = a * rho
-                y0 = b * rho
-                pt1 = (cv.Round(x0 + 1000*(-b)), cv.Round(y0 + 1000*(a)))
-                pt2 = (cv.Round(x0 - 1000*(-b)), cv.Round(y0 - 1000*(a)))
-                cv.Line(color_dst, pt1, pt2, cv.RGB(255, 0, 0), 3, 8)
-        else:
-            lines = cv.HoughLines2(dst, storage, cv.CV_HOUGH_PROBABILISTIC, 1, pi / 180, 50, 50, 10)
-            for line in lines:
-                cv.Line(color_dst, line[0], line[1], cv.CV_RGB(255, 0, 0), 3, 8)
+            cv2.imshow("detected lines", cdst)
 
-        cv.ShowImage("Source", src)
-        cv.ShowImage("Hough", color_dst)
-
-        k = cv.WaitKey(0) % 0x100
-        if k == ord(' '):
-            USE_STANDARD = not USE_STANDARD
-        if k == 27:
-            break
-    cv.DestroyAllWindows()
+    cv2.imshow("source", src)
+    cv2.waitKey(0)

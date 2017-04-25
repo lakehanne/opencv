@@ -1,12 +1,11 @@
 #include <stdio.h>
 #include <iostream>
-#include "opencv2/imgproc/imgproc.hpp"
-#include "opencv2/highgui/highgui.hpp"
-#include "opencv2/flann/miniflann.hpp"
+#include <opencv2/imgproc.hpp>
+#include <opencv2/highgui.hpp>
+#include <opencv2/core/utility.hpp>
 
 using namespace cv; // all the new API is put into "cv" namespace. Export its content
 using namespace std;
-using namespace cv::flann;
 
 static void help()
 {
@@ -15,40 +14,52 @@ static void help()
     "It shows reading of images, converting to planes and merging back, color conversion\n"
     "and also iterating through pixels.\n"
     "Call:\n"
-    "./image [image-name Default: lena.jpg]\n" << endl;
+    "./image [image-name Default: ../data/lena.jpg]\n" << endl;
 }
 
 // enable/disable use of mixed API in the code below.
 #define DEMO_MIXED_API_USE 1
 
+#ifdef DEMO_MIXED_API_USE
+#  include <opencv2/highgui/highgui_c.h>
+#  include <opencv2/imgcodecs/imgcodecs_c.h>
+#endif
+
 int main( int argc, char** argv )
 {
-    help();
-    const char* imagename = argc > 1 ? argv[1] : "lena.jpg";
-#if DEMO_MIXED_API_USE
-    Ptr<IplImage> iplimg = cvLoadImage(imagename); // Ptr<T> is safe ref-conting pointer class
-    if(iplimg.empty())
+    cv::CommandLineParser parser(argc, argv, "{help h | |}{@image|../data/lena.jpg|}");
+    if (parser.has("help"))
     {
-        fprintf(stderr, "Can not load image %s\n", imagename);
+        help();
+        return 0;
+    }
+    string imagename = parser.get<string>("@image");
+#if DEMO_MIXED_API_USE
+    //! [iplimage]
+    Ptr<IplImage> iplimg(cvLoadImage(imagename.c_str())); // Ptr<T> is safe ref-counting pointer class
+    if(!iplimg)
+    {
+        fprintf(stderr, "Can not load image %s\n", imagename.c_str());
         return -1;
     }
-    Mat img(iplimg); // cv::Mat replaces the CvMat and IplImage, but it's easy to convert
+    Mat img = cv::cvarrToMat(iplimg); // cv::Mat replaces the CvMat and IplImage, but it's easy to convert
     // between the old and the new data structures (by default, only the header
     // is converted, while the data is shared)
+    //! [iplimage]
 #else
     Mat img = imread(imagename); // the newer cvLoadImage alternative, MATLAB-style function
     if(img.empty())
     {
-        fprintf(stderr, "Can not load image %s\n", imagename);
+        fprintf(stderr, "Can not load image %s\n", imagename.c_str());
         return -1;
     }
 #endif
 
-    if( !img.data ) // check if the image has been loaded properly
+    if( img.empty() ) // check if the image has been loaded properly
         return -1;
 
     Mat img_yuv;
-    cvtColor(img, img_yuv, CV_BGR2YCrCb); // convert image to YUV color space. The output image will be created automatically
+    cvtColor(img, img_yuv, COLOR_BGR2YCrCb); // convert image to YUV color space. The output image will be created automatically
 
     vector<Mat> planes; // Vector is template vector class, similar to STL's vector. It can store matrices too.
     split(img_yuv, planes); // split the image into separate color planes
@@ -106,7 +117,7 @@ int main( int argc, char** argv )
     // now merge the results back
     merge(planes, img_yuv);
     // and produce the output RGB image
-    cvtColor(img_yuv, img, CV_YCrCb2BGR);
+    cvtColor(img_yuv, img, COLOR_YCrCb2BGR);
 
     // this is counterpart for cvNamedWindow
     namedWindow("image with grain", WINDOW_AUTOSIZE);

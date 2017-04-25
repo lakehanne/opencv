@@ -4,11 +4,10 @@
  * @author OpenCV team
  */
 
-#include "opencv2/highgui/highgui.hpp"
-#include "opencv2/imgproc/imgproc.hpp"
+#include "opencv2/imgcodecs.hpp"
+#include "opencv2/highgui.hpp"
+#include "opencv2/imgproc.hpp"
 #include <iostream>
-#include <stdio.h>
-#include <stdlib.h>
 
 using namespace cv;
 using namespace std;
@@ -27,7 +26,7 @@ void thresh_callback(int, void* );
 int main( int, char** argv )
 {
   /// Load source image and convert it to gray
-  src = imread( argv[1], 1 );
+  src = imread( argv[1], IMREAD_COLOR );
 
   /// Convert image to gray and blur it
   cvtColor( src, src_gray, COLOR_BGR2GRAY );
@@ -57,7 +56,7 @@ void thresh_callback(int, void* )
   /// Detect edges using canny
   Canny( src_gray, canny_output, thresh, thresh*2, 3 );
   /// Find contours
-  findContours( canny_output, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0) );
+  findContours( canny_output, contours, hierarchy, RETR_TREE, CHAIN_APPROX_SIMPLE, Point(0, 0) );
 
   /// Get the moments
   vector<Moments> mu(contours.size() );

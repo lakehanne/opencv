@@ -56,7 +56,7 @@
     #include <sys/types.h>
     #if defined ANDROID
         #include <sys/sysconf.h>
-    #else
+    #elif defined __APPLE__
         #include <sys/sysctl.h>
     #endif
 #endif
@@ -78,39 +78,36 @@
    2. HAVE_CSTRIPES    - 3rdparty library, should be explicitly enabled
    3. HAVE_OPENMP      - integrated to compiler, should be explicitly enabled
    4. HAVE_GCD         - system wide, used automatically        (APPLE only)
-   5. HAVE_CONCURRENCY - part of runtime, used automatically    (Windows only - MSVS 10, MSVS 11)
+   5. WINRT            - system wide, used automatically        (Windows RT only)
+   6. HAVE_CONCURRENCY - part of runtime, used automatically    (Windows only - MSVS 10, MSVS 11)
+   7. HAVE_PTHREADS_PF - pthreads if available
 */
 
 #if defined HAVE_TBB
+    #include "tbb/tbb.h"
+    #include "tbb/task.h"
     #include "tbb/tbb_stddef.h"
-    #if TBB_VERSION_MAJOR*100 + TBB_VERSION_MINOR >= 202
-        #include "tbb/tbb.h"
-        #include "tbb/task.h"
-        #if TBB_INTERFACE_VERSION >= 6100
-            #include "tbb/task_arena.h"
-        #endif
-        #undef min
-        #undef max
-    #else
-        #undef HAVE_TBB
-    #endif // end TBB version
-#endif
-
-#ifndef HAVE_TBB
-    #if defined HAVE_CSTRIPES
-        #include "C=.h"
-        #undef shared
-    #elif defined HAVE_OPENMP
-        #include <omp.h>
-    #elif defined HAVE_GCD
-        #include <dispatch/dispatch.h>
-        #include <pthread.h>
-    #elif defined HAVE_CONCURRENCY
-        #include <ppl.h>
+    #if TBB_INTERFACE_VERSION >= 8000
+        #include "tbb/task_arena.h"
     #endif
+    #undef min
+    #undef max
+#elif defined HAVE_CSTRIPES
+    #include "C=.h"
+    #undef shared
+#elif defined HAVE_OPENMP
+    #include <omp.h>
+#elif defined HAVE_GCD
+    #include <dispatch/dispatch.h>
+    #include <pthread.h>
+#elif defined WINRT && _MSC_VER < 1900
+    #include <ppltasks.h>
+#elif defined HAVE_CONCURRENCY
+    #include <ppl.h>
 #endif
 
-#if defined HAVE_TBB && TBB_VERSION_MAJOR*100 + TBB_VERSION_MINOR >= 202
+
+#if defined HAVE_TBB
 #  define CV_PARALLEL_FRAMEWORK "tbb"
 #elif defined HAVE_CSTRIPES
 #  define CV_PARALLEL_FRAMEWORK "cstripes"
@@ -118,36 +115,112 @@
 #  define CV_PARALLEL_FRAMEWORK "openmp"
 #elif defined HAVE_GCD
 #  define CV_PARALLEL_FRAMEWORK "gcd"
+#elif defined WINRT
+#  define CV_PARALLEL_FRAMEWORK "winrt-concurrency"
 #elif defined HAVE_CONCURRENCY
 #  define CV_PARALLEL_FRAMEWORK "ms-concurrency"
+#elif defined HAVE_PTHREADS_PF
+#  define CV_PARALLEL_FRAMEWORK "pthreads"
 #endif
 
 namespace cv
 {
     ParallelLoopBody::~ParallelLoopBody() {}
+#ifdef HAVE_PTHREADS_PF
+    void parallel_for_pthreads(const cv::Range& range, const cv::ParallelLoopBody& body, double nstripes);
+    size_t parallel_pthreads_get_threads_num();
+    void parallel_pthreads_set_threads_num(int num);
+#endif
 }
+
 
 namespace
 {
 #ifdef CV_PARALLEL_FRAMEWORK
-    class ParallelLoopBodyWrapper
+#ifdef ENABLE_INSTRUMENTATION
+    static void SyncNodes(cv::instr::InstrNode *pNode)
+    {
+        std::vector<cv::instr::NodeDataTls*> data;
+        pNode->m_payload.m_tls.gather(data);
+
+        uint64 ticksMax = 0;
+        int    threads  = 0;
+        for(size_t i = 0; i < data.size(); i++)
+        {
+            if(data[i] && data[i]->m_ticksTotal)
+            {
+                ticksMax = MAX(ticksMax, data[i]->m_ticksTotal);
+                pNode->m_payload.m_ticksTotal -= data[i]->m_ticksTotal;
+                data[i]->m_ticksTotal = 0;
+                threads++;
+            }
+        }
+        pNode->m_payload.m_ticksTotal += ticksMax;
+        pNode->m_payload.m_threads = MAX(pNode->m_payload.m_threads, threads);
+
+        for(size_t i = 0; i < pNode->m_childs.size(); i++)
+            SyncNodes(pNode->m_childs[i]);
+    }
+#endif
+
+    class ParallelLoopBodyWrapper : public cv::ParallelLoopBody
     {
     public:
-        ParallelLoopBodyWrapper(const cv::ParallelLoopBody& _body, const cv::Range& _r, double _nstripes)
+        ParallelLoopBodyWrapper(const cv::ParallelLoopBody& _body, const cv::Range& _r, double _nstripes) :
+            is_rng_used(false)
         {
+
             body = &_body;
             wholeRange = _r;
             double len = wholeRange.end - wholeRange.start;
             nstripes = cvRound(_nstripes <= 0 ? len : MIN(MAX(_nstripes, 1.), len));
+
+            // propagate main thread state
+            rng = cv::theRNG();
+
+#ifdef ENABLE_INSTRUMENTATION
+            pThreadRoot = cv::instr::getInstrumentTLSStruct().pCurrentNode;
+#endif
+        }
+        ~ParallelLoopBodyWrapper()
+        {
+#ifdef ENABLE_INSTRUMENTATION
+            for(size_t i = 0; i < pThreadRoot->m_childs.size(); i++)
+                SyncNodes(pThreadRoot->m_childs[i]);
+#endif
+            if (is_rng_used)
+            {
+                // Some parallel backends execute nested jobs in the main thread,
+                // so we need to restore initial RNG state here.
+                cv::theRNG() = rng;
+                // We can't properly update RNG state based on RNG usage in worker threads,
+                // so lets just change main thread RNG state to the next value.
+                // Note: this behaviour is not equal to single-threaded mode.
+                cv::theRNG().next();
+            }
         }
         void operator()(const cv::Range& sr) const
         {
+#ifdef ENABLE_INSTRUMENTATION
+            {
+                cv::instr::InstrTLSStruct *pInstrTLS = &cv::instr::getInstrumentTLSStruct();
+                pInstrTLS->pCurrentNode = pThreadRoot; // Initialize TLS node for thread
+            }
+#endif
+            CV_INSTRUMENT_REGION()
+
+            // propagate main thread state
+            cv::theRNG() = rng;
+
             cv::Range r;
             r.start = (int)(wholeRange.start +
                             ((uint64)sr.start*(wholeRange.end - wholeRange.start) + nstripes/2)/nstripes);
             r.end = sr.end >= nstripes ? wholeRange.end : (int)(wholeRange.start +
                             ((uint64)sr.end*(wholeRange.end - wholeRange.start) + nstripes/2)/nstripes);
             (*body)(r);
+
+            if (!is_rng_used && !(cv::theRNG() == rng))
+                is_rng_used = true;
         }
         cv::Range stripeRange() const { return cv::Range(0, nstripes); }
 
@@ -155,6 +228,11 @@ namespace
         const cv::ParallelLoopBody* body;
         cv::Range wholeRange;
         int nstripes;
+        cv::RNG rng;
+        mutable bool is_rng_used;
+#ifdef ENABLE_INSTRUMENTATION
+        cv::instr::InstrNode *pThreadRoot;
+#endif
     };
 
 #if defined HAVE_TBB
@@ -179,7 +257,7 @@ namespace
         ProxyLoopBody* ptr_body = static_cast<ProxyLoopBody*>(context);
         (*ptr_body)(cv::Range((int)index, (int)index + 1));
     }
-#elif defined HAVE_CONCURRENCY
+#elif defined WINRT || defined HAVE_CONCURRENCY
     class ProxyLoopBody : public ParallelLoopBodyWrapper
     {
     public:
@@ -206,7 +284,10 @@ static tbb::task_scheduler_init tbbScheduler(tbb::task_scheduler_init::deferred)
 static int numThreadsMax = omp_get_max_threads();
 #elif defined HAVE_GCD
 // nothing for GCD
+#elif defined WINRT
+// nothing for WINRT
 #elif defined HAVE_CONCURRENCY
+
 class SchedPtr
 {
     Concurrency::Scheduler* sched_;
@@ -221,9 +302,10 @@ public:
     }
 
     SchedPtr() : sched_(0) {}
-    ~SchedPtr() { *this = 0; }
+    ~SchedPtr() {}
 };
 static SchedPtr pplScheduler;
+
 #endif
 
 #endif // CV_PARALLEL_FRAMEWORK
@@ -234,12 +316,21 @@ static SchedPtr pplScheduler;
 
 void cv::parallel_for_(const cv::Range& range, const cv::ParallelLoopBody& body, double nstripes)
 {
+    CV_INSTRUMENT_REGION_MT_FORK()
+    if (range.empty())
+        return;
+
 #ifdef CV_PARALLEL_FRAMEWORK
 
     if(numThreads != 0)
     {
         ProxyLoopBody pbody(body, range, nstripes);
         cv::Range stripeRange = pbody.stripeRange();
+        if( stripeRange.end - stripeRange.start == 1 )
+        {
+            body(range);
+            return;
+        }
 
 #if defined HAVE_TBB
 
@@ -267,6 +358,10 @@ void cv::parallel_for_(const cv::Range& range, const cv::ParallelLoopBody& body,
         dispatch_queue_t concurrent_queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
         dispatch_apply_f(stripeRange.end - stripeRange.start, concurrent_queue, &pbody, block_function);
 
+#elif defined WINRT
+
+        Concurrency::parallel_for(stripeRange.start, stripeRange.end, pbody);
+
 #elif defined HAVE_CONCURRENCY
 
         if(!pplScheduler || pplScheduler->Id() == Concurrency::CurrentScheduler::Id())
@@ -279,6 +374,10 @@ void cv::parallel_for_(const cv::Range& range, const cv::ParallelLoopBody& body,
             Concurrency::parallel_for(stripeRange.start, stripeRange.end, pbody);
             Concurrency::CurrentScheduler::Detach();
         }
+
+#elif defined HAVE_PTHREADS_PF
+
+        parallel_for_pthreads(pbody.stripeRange(), pbody, pbody.stripeRange().size());
 
 #else
 
@@ -325,11 +424,19 @@ int cv::getNumThreads(void)
 
     return 512; // the GCD thread pool limit
 
+#elif defined WINRT
+
+    return 0;
+
 #elif defined HAVE_CONCURRENCY
 
     return 1 + (pplScheduler == 0
-                ? Concurrency::CurrentScheduler::Get()->GetNumberOfVirtualProcessors()
-                : pplScheduler->GetNumberOfVirtualProcessors());
+        ? Concurrency::CurrentScheduler::Get()->GetNumberOfVirtualProcessors()
+        : pplScheduler->GetNumberOfVirtualProcessors());
+
+#elif defined HAVE_PTHREADS_PF
+
+        return parallel_pthreads_get_threads_num();
 
 #else
 
@@ -366,6 +473,10 @@ void cv::setNumThreads( int threads )
     // unsupported
     // there is only private dispatch_queue_set_width() and only for desktop
 
+#elif defined WINRT
+
+    return;
+
 #elif defined HAVE_CONCURRENCY
 
     if (threads <= 0)
@@ -384,6 +495,10 @@ void cv::setNumThreads( int threads )
                        Concurrency::MaxConcurrency, threads-1));
     }
 
+#elif defined HAVE_PTHREADS_PF
+
+    parallel_pthreads_set_threads_num(threads);
+
 #endif
 }
 
@@ -391,8 +506,10 @@ void cv::setNumThreads( int threads )
 int cv::getThreadNum(void)
 {
 #if defined HAVE_TBB
-    #if TBB_INTERFACE_VERSION >= 6100 && defined TBB_PREVIEW_TASK_ARENA && TBB_PREVIEW_TASK_ARENA
-        return tbb::task_arena::current_slot();
+    #if TBB_INTERFACE_VERSION >= 9100
+        return tbb::this_task_arena::current_thread_index();
+    #elif TBB_INTERFACE_VERSION >= 8000
+        return tbb::task_arena::current_thread_index();
     #else
         return 0;
     #endif
@@ -402,8 +519,12 @@ int cv::getThreadNum(void)
     return omp_get_thread_num();
 #elif defined HAVE_GCD
     return (int)(size_t)(void*)pthread_self(); // no zero-based indexing
+#elif defined WINRT
+    return 0;
 #elif defined HAVE_CONCURRENCY
     return std::max(0, (int)Concurrency::Context::VirtualProcessorId()); // zero for master thread, unique number for others but not necessary 1,2,3,...
+#elif defined HAVE_PTHREADS_PF
+    return (int)(size_t)(void*)pthread_self(); // no zero-based indexing
 #else
     return 0;
 #endif
@@ -453,7 +574,7 @@ int cv::getNumberOfCPUs(void)
 {
 #if defined WIN32 || defined _WIN32
     SYSTEM_INFO sysinfo;
-#if defined(_M_ARM) || defined(_M_X64) || defined(HAVE_WINRT)
+#if (defined(_M_ARM) || defined(_M_X64) || defined(WINRT)) && _WIN32_WINNT >= 0x501
     GetNativeSystemInfo( &sysinfo );
 #else
     GetSystemInfo( &sysinfo );
